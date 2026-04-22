@@ -222,7 +222,7 @@ def main():
 
     # Starter projects
     print()
-    default_projects = "Calico, Zelestra"
+    default_projects = "Calico, Cobia, Personal, Vistra, Zelestra"
     projects_input = input(f"Initial projects (comma-separated) [{default_projects}]: ").strip()
     projects = [p.strip() for p in (projects_input or default_projects).split(",") if p.strip()]
 
