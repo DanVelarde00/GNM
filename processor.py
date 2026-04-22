@@ -349,6 +349,42 @@ tags:
     raw_path.write_text(raw_md, encoding="utf-8")
     print(f"  {raw_type.title()}: {raw_path}")
 
+    # ── Write custom tracker items ──
+    try:
+        from api.services.tracker_service import load_trackers
+        for tracker in load_trackers():
+            if not tracker.active:
+                continue
+            key = tracker.folder_name.lower().replace(" ", "_") + "_items"
+            items = data.get(key, [])
+            if not items:
+                continue
+            tracker_dir = project_dir / tracker.folder_name
+            tracker_dir.mkdir(parents=True, exist_ok=True)
+            for item in items:
+                item_title = item.get("title", "untitled")
+                item_slug = re.sub(r"[^\w\-]", "-", item_title.lower()).strip("-")[:40]
+                item_filename = f"{date_str}-{item_slug}.md"
+                item_md = f"""---
+date: {date_str}
+project: "[[{project}]]"
+tracker: "{tracker.name}"
+source_note: "[[{filename}]]"
+tags:
+  - {tracker.folder_name.lower().replace(' ', '-')}
+---
+
+# {item_title}
+
+{item.get('details', '')}
+
+From: [[{filename.replace('.md', '')}]]
+"""
+                (tracker_dir / item_filename).write_text(item_md, encoding="utf-8")
+                print(f"  Tracker [{tracker.name}]: {item_filename}")
+    except ImportError:
+        pass  # API not installed, running standalone
+
     # ── Create/update people files ──
     update_people(data, project)
 

@@ -13,3 +13,13 @@ Thumbs.db
 
 # Claude Code
 .claude/
+
+# Dashboard
+data/search_index/
+dashboard/node_modules/
+dashboard/.next/
+dashboard/out/
+dashboard/.next/
+
+# Build artifacts
+.next/

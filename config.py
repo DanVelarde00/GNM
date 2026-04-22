@@ -39,3 +39,8 @@ PROJECTS = ["Calico", "Cobia", "Personal", "Vistra", "Zelestra"]
 
 # ── File extensions we process ──────────────────────────────────────────────
 SUPPORTED_EXTENSIONS = {".txt", ".docx", ".pdf", ".md"}
+
+# ── Dashboard paths ────────────────────────────────────────────────────────
+DATA_DIR = Path(__file__).parent / "data"
+SEARCH_INDEX_PATH = DATA_DIR / "search_index"
+TRACKER_STATE_FILE = DATA_DIR / "trackers.json"
