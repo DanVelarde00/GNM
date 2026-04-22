@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
 """
-GNM Runner — On-demand transcript processing.
+GNM Runner — Transcript processing agent.
 
-Scans all inbox folders (Inq, Otter, Manual) and the Google Drive Otter sync
-folder for new files, processes each through Claude, and routes output to the vault.
-
-Usage:
-    python run.py              # Process all inbox folders
-    python run.py --watch      # Watch mode (persistent, for future use)
-    python run.py <file>       # Process a single file
+Modes:
+    python run.py              Scan once: pull from Otter + scan inboxes, process all
+    python run.py --watch      Poll continuously (every 60s)
+    python run.py <file>       Process a single local file
 """
 
 import sys
@@ -19,7 +16,8 @@ import config
 from processor import process_file
 
 
-def scan_folder(folder: Path, source_type: str) -> list[Path]:
+def scan_folder(folder: Path, source_type: str) -> list[tuple[Path, str]]:
+    """Find all processable files in a folder."""
     if not folder.exists():
         return []
     files = []
@@ -29,6 +27,7 @@ def scan_folder(folder: Path, source_type: str) -> list[Path]:
 
 
 def scan_all_inboxes() -> list[tuple[Path, str]]:
+    """Scan all local watched folders for new files."""
     pending = []
     pending.extend(scan_folder(config.OTTER_GDRIVE_PATH, "otter"))
     pending.extend(scan_folder(config.INBOX_OTTER, "otter"))
@@ -37,26 +36,50 @@ def scan_all_inboxes() -> list[tuple[Path, str]]:
     return pending
 
 
-def run_once():
+def pull_from_otter() -> list[tuple[Path, str]]:
+    """Pull new transcripts from Otter.ai API into the inbox."""
+    import os
+    if not os.getenv("OTTER_EMAIL") or not os.getenv("OTTER_PASSWORD"):
+        return []
+
+    try:
+        from otter_client import OtterPoller
+        print("Checking Otter.ai for new transcripts...")
+        poller = OtterPoller(output_dir=config.INBOX_OTTER)
+        new_files = poller.poll()
+        return [(f, "otter") for f in new_files]
+    except Exception as e:
+        print(f"  Otter pull failed: {e}")
+        return []
+
+
+def print_status():
+    """Print current configuration."""
+    import os
     print("=" * 60)
-    print("  GNM — Scanning for new transcripts")
+    print("  GNM Agent")
     print("=" * 60)
-    print(f"  Vault:       {config.VAULT_PATH}")
+    print(f"  Vault:        {config.VAULT_PATH}")
     print(f"  Otter GDrive: {config.OTTER_GDRIVE_PATH}")
-    print(f"  Inbox:       {config.INBOX_PATH}")
+    print(f"  Inbox:        {config.INBOX_PATH}")
+    print(f"  Otter API:    {'enabled' if os.getenv('OTTER_EMAIL') else 'disabled (no credentials)'}")
+    print(f"  Projects:     {', '.join(config.PROJECTS)}")
+
+    folders = [
+        ("Otter GDrive", config.OTTER_GDRIVE_PATH),
+        ("Inbox/Otter", config.INBOX_OTTER),
+        ("Inbox/Inq", config.INBOX_INQ),
+        ("Inbox/Manual", config.INBOX_MANUAL),
+    ]
+    print()
+    for name, path in folders:
+        exists = "OK" if path.exists() else "NOT FOUND"
+        print(f"  [{exists}] {name}: {path}")
     print()
 
-    pending = scan_all_inboxes()
 
-    if not pending:
-        print("No new files found.")
-        return
-
-    print(f"Found {len(pending)} file(s) to process:\n")
-    for f, src in pending:
-        print(f"  [{src}] {f.name}")
-    print()
-
+def process_pending(pending: list[tuple[Path, str]]) -> tuple[int, int]:
+    """Process a list of files. Returns (processed, errors)."""
     processed = 0
     errors = 0
     for file_path, source_type in pending:
@@ -67,6 +90,36 @@ def run_once():
         except Exception as e:
             print(f"  ERROR processing {file_path.name}: {e}")
             errors += 1
+    return processed, errors
+
+
+def run_once():
+    """Pull from Otter, scan all inboxes, process everything."""
+    print_status()
+
+    # Step 1: Pull new transcripts from Otter API
+    otter_files = pull_from_otter()
+
+    # Step 2: Scan local folders
+    local_files = scan_all_inboxes()
+
+    # Combine, dedup by filename
+    seen = set()
+    pending = []
+    for f, src in otter_files + local_files:
+        if f.name not in seen:
+            seen.add(f.name)
+            pending.append((f, src))
+
+    if not pending:
+        print("No new files found.")
+        return
+
+    print(f"\nFound {len(pending)} file(s) to process:")
+    for f, src in pending:
+        print(f"  [{src}] {f.name}")
+
+    processed, errors = process_pending(pending)
 
     print()
     print("=" * 60)
@@ -75,31 +128,53 @@ def run_once():
 
 
 def run_watch():
-    """Persistent watch mode — polls every 30 seconds."""
-    print("GNM Watcher — monitoring for new files (Ctrl+C to stop)")
-    print(f"  Polling interval: 30s\n")
+    """Poll Otter + inboxes every 60 seconds. Ctrl+C to stop."""
+    print_status()
+    print("  Mode: WATCH (polling every 60s)")
+    print("  Press Ctrl+C to stop")
+    print("=" * 60)
+
+    total_processed = 0
+    total_errors = 0
+
     try:
         while True:
-            pending = scan_all_inboxes()
+            # Pull from Otter
+            otter_files = pull_from_otter()
+
+            # Scan local
+            local_files = scan_all_inboxes()
+
+            seen = set()
+            pending = []
+            for f, src in otter_files + local_files:
+                if f.name not in seen:
+                    seen.add(f.name)
+                    pending.append((f, src))
+
             if pending:
-                print(f"\n[{time.strftime('%H:%M:%S')}] Found {len(pending)} new file(s)")
-                for file_path, source_type in pending:
-                    try:
-                        process_file(file_path, source_type)
-                    except Exception as e:
-                        print(f"  ERROR: {file_path.name}: {e}")
-            time.sleep(30)
+                ts = time.strftime("%H:%M:%S")
+                print(f"\n[{ts}] Found {len(pending)} new file(s)")
+                for f, src in pending:
+                    print(f"  [{src}] {f.name}")
+
+                p, e = process_pending(pending)
+                total_processed += p
+                total_errors += e
+                print(f"[{ts}] Session total: {total_processed} processed, {total_errors} errors")
+
+            time.sleep(60)
     except KeyboardInterrupt:
-        print("\nWatcher stopped.")
+        print(f"\nWatcher stopped. Total: {total_processed} processed, {total_errors} errors")
 
 
 def run_single(file_path_str: str):
+    """Process one file."""
     path = Path(file_path_str)
     if not path.exists():
         print(f"File not found: {path}")
         sys.exit(1)
 
-    # Guess source type from parent folder name
     parent = path.parent.name.lower()
     if "otter" in parent:
         source_type = "otter"
@@ -113,7 +188,8 @@ def run_single(file_path_str: str):
 
 def main():
     if not config.ANTHROPIC_API_KEY:
-        print("ERROR: ANTHROPIC_API_KEY not set. Copy .env.example to .env and add your key.")
+        print("ERROR: ANTHROPIC_API_KEY not set.")
+        print(f"Add your key to: {Path(config.__file__).parent / '.env'}")
         sys.exit(1)
 
     if len(sys.argv) > 1:

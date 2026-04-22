@@ -1,9 +1,11 @@
 """
 GNM Transcript Processor
-Reads a raw transcript, sends it through Claude for analysis,
-writes structured markdown to the vault.
+Full Obsidian-aware agent: reads transcripts, calls Claude for analysis,
+routes structured markdown to the vault with wiki-links, tags, people
+management, and action item extraction.
 """
 
+import json
 import re
 import shutil
 from datetime import datetime, timedelta
@@ -21,54 +23,46 @@ You process meeting transcripts and notes into structured Obsidian-compatible ma
 
 Known projects: {projects}
 
+Tag taxonomy:
+- Project tags: #project-calico, #project-cobia, #project-personal, #project-vistra, #project-zelestra
+- Type tags: #meeting, #note, #call, #brainstorm
+- Topic tags: #solar-tax-equity, #sce, #due-diligence, #finance, #legal, #operations, #strategy
+
 Your job:
 1. Read the raw transcript/note.
-2. Detect which project it belongs to from context. If you can't determine the project, use "General".
-3. Extract the date of the meeting/note. If not explicit, use today's date.
-4. Identify all participants mentioned.
-5. Determine a short topic (2-5 words) for the filename.
+2. Detect which project it belongs to from context. If unclear, use "General".
+   If multiple projects are discussed, pick the primary one.
+3. Extract the date. If not explicit in the text, use today: {today}.
+4. Identify ALL participants/people mentioned by name.
+5. Determine a short topic (2-5 words, lowercase, hyphenated) for the filename.
+6. Assign relevant tags from the taxonomy above. Add new topic tags if needed.
 
-Output EXACTLY this format (no extra text before or after):
+You MUST respond with valid JSON only. No markdown, no explanation, no code fences.
+The JSON schema:
 
----YAML---
-date: YYYY-MM-DD
-type: meeting or note
-source: otter or inq or manual
-participants:
-  - Name One
-  - Name Two
-project: ProjectName
-tags:
-  - tag-one
-  - tag-two
-topic: short-topic-slug
----END YAML---
-
-## Summary
-3-5 sentence summary of the content.
-
-## Key Points
-- Point one
-- Point two
-
-## Action Items
-- [ ] Action item with @Owner if identifiable
-- [ ] Another action item
-
-## Decisions
-- Decision one
-- Decision two
-
-## Raw Transcript Link
-(will be filled by the system)
-""".format(projects=", ".join(config.PROJECTS))
+{{
+  "date": "YYYY-MM-DD",
+  "type": "meeting|note|call",
+  "source": "otter|inq|manual",
+  "participants": ["Name One", "Name Two"],
+  "project": "ProjectName",
+  "tags": ["#project-calico", "#meeting", "#solar-tax-equity"],
+  "topic": "short-topic-slug",
+  "summary": "3-5 sentence summary of the content.",
+  "key_points": ["Point one", "Point two"],
+  "action_items": [
+    {{"task": "Do something", "owner": "Name or null", "due": "YYYY-MM-DD or null"}},
+  ],
+  "decisions": ["Decision one", "Decision two"]
+}}
+""".format(projects=", ".join(config.PROJECTS), today=datetime.now().strftime("%Y-%m-%d"))
 
 
 # ── File reading helpers ────────────────────────────────────────────────────
 
 def read_transcript(file_path: Path) -> str:
     suffix = file_path.suffix.lower()
-    if suffix == ".txt" or suffix == ".md":
+    if suffix in (".txt", ".md"):
         return file_path.read_text(encoding="utf-8")
     elif suffix == ".docx":
         doc = Document(str(file_path))
@@ -86,109 +80,279 @@ def get_week_folder(date: datetime) -> str:
     return f"W{week_num:02d}_{week_start.strftime('%b%d')}-{week_end.strftime('%b%d')}"
 
 
-# ── Parse Claude's response ────────────────────────────────────────────────
+def parse_date(date_str: str) -> datetime:
+    try:
+        return datetime.strptime(date_str, "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return datetime.now()
+
+
+# ── Parse Claude's JSON response ───────────────────────────────────────────
 
 def parse_response(response_text: str) -> dict:
-    yaml_match = re.search(r"---YAML---\n(.+?)\n---END YAML---", response_text, re.DOTALL)
-    if not yaml_match:
-        raise ValueError("Could not parse YAML block from Claude response")
+    text = response_text.strip()
+    # Strip code fences if Claude wraps it anyway
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\n?", "", text)
+        text = re.sub(r"\n?```$", "", text)
+    return json.loads(text)
 
-    yaml_raw = yaml_match.group(1)
-    metadata = {}
 
-    for line in yaml_raw.strip().split("\n"):
-        line = line.strip()
-        if line.startswith("- "):
-            # List item — append to last key
-            metadata.setdefault(last_key, []).append(line[2:].strip())
+# ── Build Obsidian markdown with wiki-links ─────────────────────────────────
+
+def build_analyzed_note(data: dict, source_filename: str, project: str) -> str:
+    date = data.get("date", datetime.now().strftime("%Y-%m-%d"))
+    note_type = data.get("type", "note")
+    source = data.get("source", "unknown")
+    participants = data.get("participants", [])
+    tags = data.get("tags", [])
+    topic = data.get("topic", "untitled")
+
+    # YAML frontmatter
+    participant_yaml = "\n".join(f'  - "[[{p}]]"' for p in participants)
+    tag_yaml = "\n".join(f"  - {t}" for t in tags)
+
+    lines = [
+        "---",
+        f"date: {date}",
+        f"type: {note_type}",
+        f"source: {source}",
+        f"project: \"[[{project}]]\"",
+        "participants:",
+        participant_yaml,
+        "tags:",
+        tag_yaml,
+        "---",
+        "",
+        f"# {topic.replace('-', ' ').title()}",
+        "",
+        f"**Project:** [[{project}]]  ",
+        f"**Date:** {date}  ",
+        f"**Participants:** {', '.join(f'[[{p}]]' for p in participants)}  ",
+        f"**Source:** {source}",
+        "",
+        "## Summary",
+        data.get("summary", ""),
+        "",
+        "## Key Points",
+    ]
+
+    for point in data.get("key_points", []):
+        lines.append(f"- {point}")
+
+    lines.append("")
+    lines.append("## Action Items")
+    for item in data.get("action_items", []):
+        task = item.get("task", "")
+        owner = item.get("owner")
+        due = item.get("due")
+        owner_str = f" — [[{owner}]]" if owner else ""
+        due_str = f" (due: {due})" if due else ""
+        lines.append(f"- [ ] {task}{owner_str}{due_str}")
+
+    lines.append("")
+    lines.append("## Decisions")
+    for decision in data.get("decisions", []):
+        lines.append(f"- {decision}")
+
+    lines.append("")
+    lines.append("## Source")
+    source_stem = Path(source_filename).stem
+    lines.append(f"[[{source_stem}]]")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+# ── Build action items file ─────────────────────────────────────────────────
+
+def build_action_items_note(data: dict, analyzed_note_filename: str, project: str) -> str | None:
+    items = data.get("action_items", [])
+    if not items:
+        return None
+
+    date = data.get("date", datetime.now().strftime("%Y-%m-%d"))
+    topic = data.get("topic", "untitled")
+
+    lines = [
+        "---",
+        f"date: {date}",
+        f"project: \"[[{project}]]\"",
+        f"source_note: \"[[{analyzed_note_filename}]]\"",
+        "tags:",
+        "  - action-items",
+        "---",
+        "",
+        f"# Action Items — {topic.replace('-', ' ').title()}",
+        "",
+        f"From: [[{analyzed_note_filename.replace('.md', '')}]]",
+        "",
+    ]
+
+    for item in items:
+        task = item.get("task", "")
+        owner = item.get("owner")
+        due = item.get("due")
+        owner_str = f" — [[{owner}]]" if owner else ""
+        due_str = f" (due: {due})" if due else ""
+        lines.append(f"- [ ] {task}{owner_str}{due_str}")
+
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ── People management ──────────────────────────────────────────────────────
+
+def update_people(data: dict, project: str):
+    """Create or update People/ .md files for each participant."""
+    participants = data.get("participants", [])
+    if not participants:
+        return
+
+    people_dir = config.VAULT_PATH / "Projects" / project / "People"
+    people_dir.mkdir(parents=True, exist_ok=True)
+
+    for person in participants:
+        person_file = people_dir / f"{person}.md"
+        if person_file.exists():
+            # Person file already exists — Obsidian backlinks handle the rest
             continue
-        if ":" in line:
-            key, _, val = line.partition(":")
-            key = key.strip()
-            val = val.strip()
-            last_key = key
-            if val:
-                metadata[key] = val
-            else:
-                metadata[key] = []
 
-    # Body is everything after the YAML block
-    body_start = response_text.find("---END YAML---")
-    body = response_text[body_start + len("---END YAML---"):].strip()
+        content = f"""---
+name: "{person}"
+role:
+organization:
+tags:
+  - person
+---
 
-    return {"metadata": metadata, "body": body}
+# {person}
 
+## Related Notes
+```dataview
+LIST
+FROM "Projects/{project}"
+WHERE contains(participants, "{person}")
+SORT date DESC
+```
 
-# ── Build the output markdown ──────────────────────────────────────────────
-
-def build_markdown(metadata: dict, body: str, source_filename: str) -> str:
-    participants = metadata.get("participants", [])
-    if isinstance(participants, str):
-        participants = [participants]
-
-    tags = metadata.get("tags", [])
-    if isinstance(tags, str):
-        tags = [tags]
-
-    frontmatter = f"""---
-date: {metadata.get('date', datetime.now().strftime('%Y-%m-%d'))}
-type: {metadata.get('type', 'note')}
-source: {metadata.get('source', 'unknown')}
-participants: [{', '.join(f'"{p}"' for p in participants)}]
-project: {metadata.get('project', 'General')}
-tags: [{', '.join(tags)}]
----"""
-
-    # Replace the raw transcript link placeholder
-    body = body.replace(
-        "(will be filled by the system)",
-        f"[[Transcripts/{source_filename}]]"
-    )
-
-    return f"{frontmatter}\n\n{body}\n"
+## Action Items
+```dataview
+TASK
+FROM "Projects/{project}"
+WHERE contains(text, "{person}") AND !completed
+```
+"""
+        person_file.write_text(content, encoding="utf-8")
+        print(f"    Created person: {person_file}")
 
 
-# ── Route output to correct vault location ──────────────────────────────────
+# ── Transcript vs note detection ────────────────────────────────────────────
 
-def route_to_vault(metadata: dict, markdown: str, source_path: Path):
-    project = metadata.get("project", "General")
+def _is_transcript(source_path: Path, data: dict) -> bool:
+    """Determine if the source is a transcript (vs a note) based on content signals."""
+    # Source type is a strong signal
+    source = data.get("source", "")
+    if source == "otter":
+        return True
+    if source == "inq":
+        return False
 
-    # Validate project — if unknown, create it
+    # Check for timestamp patterns (e.g., "0:03", "12:45", "1:23:45")
+    text = source_path.read_text(encoding="utf-8")
+    timestamp_pattern = re.compile(r"\b\d{1,2}:\d{2}(?::\d{2})?\b")
+    timestamp_hits = len(timestamp_pattern.findall(text[:2000]))
+
+    # Check for speaker labels (e.g., "Name  0:03" or "Speaker 1:")
+    speaker_pattern = re.compile(r"^[A-Z][\w\s]+(?:\s+\d+:\d{2}|\s*:)", re.MULTILINE)
+    speaker_hits = len(speaker_pattern.findall(text[:2000]))
+
+    # If timestamps and speaker labels are frequent, it's a transcript
+    if timestamp_hits >= 3 and speaker_hits >= 2:
+        return True
+
+    # Claude's type detection as fallback
+    if data.get("type") in ("meeting", "call"):
+        return True
+
+    return False
+
+
+# ── Route output to vault ──────────────────────────────────────────────────
+
+def route_to_vault(data: dict, source_path: Path) -> dict:
+    project = data.get("project", "General")
+
+    # Validate project — create structure if new
     project_dir = config.VAULT_PATH / "Projects" / project
     if not project_dir.exists():
-        print(f"  New project detected: {project} — creating folder structure")
-        for sub in ["Notes", "Transcripts", "AI Analyzed Notes", "Action Items",
-                     "Weekly Reports", "People"]:
+        print(f"  New project detected: {project}")
+        for sub in ["Notes", "Transcripts", "AI Analyzed Notes",
+                     "Action Items", "Weekly Reports", "People"]:
             (project_dir / sub).mkdir(parents=True, exist_ok=True)
 
-    # Determine date and week folder
-    date_str = metadata.get("date", datetime.now().strftime("%Y-%m-%d"))
-    try:
-        date = datetime.strptime(date_str, "%Y-%m-%d")
-    except ValueError:
-        date = datetime.now()
-
+    # Date and week
+    date = parse_date(data.get("date"))
     year = str(date.year)
     week_folder = get_week_folder(date)
+    date_str = date.strftime("%Y-%m-%d")
 
-    # Write analyzed note
-    topic = metadata.get("topic", "untitled")
-    topic = re.sub(r"[^\w\-]", "-", topic.lower()).strip("-")
-    filename = f"{date_str}-{topic}.md"
+    # Filename
+    topic = data.get("topic", "untitled")
+    topic_slug = re.sub(r"[^\w\-]", "-", topic.lower()).strip("-")
+    filename = f"{date_str}-{topic_slug}.md"
 
-    out_dir = project_dir / "AI Analyzed Notes" / year / week_folder
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / filename
-    out_path.write_text(markdown, encoding="utf-8")
-    print(f"  Written: {out_path}")
+    # ── Write analyzed note ──
+    analyzed_dir = project_dir / "AI Analyzed Notes" / year / week_folder
+    analyzed_dir.mkdir(parents=True, exist_ok=True)
+    analyzed_path = analyzed_dir / filename
 
-    # Copy raw transcript to project Transcripts folder
-    transcript_dir = project_dir / "Transcripts"
-    transcript_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source_path, transcript_dir / source_path.name)
-    print(f"  Transcript copied: {transcript_dir / source_path.name}")
+    analyzed_md = build_analyzed_note(data, source_path.name, project)
+    analyzed_path.write_text(analyzed_md, encoding="utf-8")
+    print(f"  Analyzed note: {analyzed_path}")
 
-    return out_path
+    # ── Write action items ──
+    action_items_md = build_action_items_note(data, filename, project)
+    if action_items_md:
+        ai_dir = project_dir / "Action Items" / year / week_folder
+        ai_dir.mkdir(parents=True, exist_ok=True)
+        ai_path = ai_dir / filename
+        ai_path.write_text(action_items_md, encoding="utf-8")
+        print(f"  Action items: {ai_path}")
+
+    # ── Save raw source as .md (route by content type) ──
+    is_transcript = _is_transcript(source_path, data)
+    if is_transcript:
+        raw_dir = project_dir / "Transcripts"
+        raw_type = "transcript"
+    else:
+        raw_dir = project_dir / "Notes"
+        raw_type = "note"
+
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    raw_filename = source_path.stem + ".md"
+    raw_path = raw_dir / raw_filename
+    raw_text = source_path.read_text(encoding="utf-8")
+    raw_md = f"""---
+date: {date_str}
+type: {raw_type}
+source: {data.get('source', 'unknown')}
+project: "[[{project}]]"
+tags:
+  - {raw_type}
+---
+
+# {raw_type.title()} — {source_path.stem}
+
+{raw_text}
+"""
+    raw_path.write_text(raw_md, encoding="utf-8")
+    print(f"  {raw_type.title()}: {raw_path}")
+
+    # ── Create/update people files ──
+    update_people(data, project)
+
+    return {"analyzed_path": analyzed_path, "project": project, "data": data}
 
 
 # ── Move source to Processed ───────────────────────────────────────────────
@@ -196,7 +360,6 @@ def route_to_vault(metadata: dict, markdown: str, source_path: Path):
 def mark_processed(source_path: Path):
     config.INBOX_PROCESSED.mkdir(parents=True, exist_ok=True)
     dest = config.INBOX_PROCESSED / source_path.name
-    # Avoid overwrite — append timestamp if exists
     if dest.exists():
         stem = source_path.stem
         suffix = source_path.suffix
@@ -208,9 +371,11 @@ def mark_processed(source_path: Path):
 
 # ── Main processing function ───────────────────────────────────────────────
 
-def process_file(file_path: Path, source_type: str = "otter") -> Path:
-    print(f"\nProcessing: {file_path.name}")
-    print(f"  Source type: {source_type}")
+def process_file(file_path: Path, source_type: str = "otter") -> dict | None:
+    print(f"\n{'='*60}")
+    print(f"  Processing: {file_path.name}")
+    print(f"  Source: {source_type}")
+    print(f"{'='*60}")
 
     # Read transcript
     transcript = read_transcript(file_path)
@@ -218,9 +383,10 @@ def process_file(file_path: Path, source_type: str = "otter") -> Path:
         print("  SKIP: Empty file")
         return None
 
-    print(f"  Transcript length: {len(transcript)} chars")
+    print(f"  Transcript: {len(transcript)} chars")
 
     # Call Claude
+    print("  Calling Claude...")
     client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
     message = client.messages.create(
         model=config.CLAUDE_MODEL,
@@ -235,18 +401,17 @@ def process_file(file_path: Path, source_type: str = "otter") -> Path:
     )
 
     response_text = message.content[0].text
-    print(f"  Claude response: {len(response_text)} chars")
+    print(f"  Response: {len(response_text)} chars")
 
-    # Parse and build output
-    parsed = parse_response(response_text)
-    # Ensure source type is set correctly
-    parsed["metadata"]["source"] = source_type
-    markdown = build_markdown(parsed["metadata"], parsed["body"], file_path.name)
+    # Parse JSON
+    data = parse_response(response_text)
+    data["source"] = source_type
 
     # Route to vault
-    out_path = route_to_vault(parsed["metadata"], markdown, file_path)
+    result = route_to_vault(data, file_path)
 
     # Move source to Processed
     mark_processed(file_path)
 
-    return out_path
+    print(f"\n  Done -> {result['project']}/{file_path.name}")
+    return result
