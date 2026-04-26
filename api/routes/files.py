@@ -28,3 +28,12 @@ def save_file(req: FileSaveRequest):
 @router.get("/projects", response_model=list[ProjectInfo])
 def list_projects():
     return vault_service.list_projects()
+
+
+@router.delete("/note")
+def delete_note(path: str):
+    try:
+        result = vault_service.delete_note(path)
+        return {"ok": True, **result}
+    except Exception as e:
+        raise HTTPException(500, str(e))

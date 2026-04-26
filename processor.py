@@ -24,9 +24,13 @@ You process meeting transcripts and notes into structured Obsidian-compatible ma
 Known projects: {projects}
 
 Tag taxonomy:
-- Project tags: #project-calico, #project-cobia, #project-personal, #project-vistra, #project-zelestra
+- Project tags (use short form): #calico, #cobia, #personal, #vistra, #zelestra
 - Type tags: #meeting, #note, #call, #brainstorm
 - Topic tags: #solar-tax-equity, #sce, #due-diligence, #finance, #legal, #operations, #strategy
+
+IMPORTANT — When processing meeting transcripts, IGNORE all opening pleasantries, small talk,
+greetings, and closing courtesies (e.g. "How are you?", "Thanks for joining", "Talk to you soon",
+"Have a great day"). Begin your summary and extraction from the first substantive business topic.
 
 Your job:
 1. Read the raw transcript/note.
@@ -46,7 +50,7 @@ The JSON schema:
   "source": "otter|inq|manual",
   "participants": ["Name One", "Name Two"],
   "project": "ProjectName",
-  "tags": ["#project-calico", "#meeting", "#solar-tax-equity"],
+  "tags": ["#calico", "#meeting", "#solar-tax-equity"],
   "topic": "short-topic-slug",
   "summary": "3-5 sentence summary of the content.",
   "key_points": ["Point one", "Point two"],
@@ -312,11 +316,13 @@ def route_to_vault(data: dict, source_path: Path) -> dict:
     print(f"  Analyzed note: {analyzed_path}")
 
     # ── Write action items ──
+    actions_filename = filename.replace(".md", "-actions.md")
     action_items_md = build_action_items_note(data, filename, project)
+    ai_path = None
     if action_items_md:
         ai_dir = project_dir / "Action Items" / year / week_folder
         ai_dir.mkdir(parents=True, exist_ok=True)
-        ai_path = ai_dir / filename
+        ai_path = ai_dir / actions_filename
         ai_path.write_text(action_items_md, encoding="utf-8")
         print(f"  Action items: {ai_path}")
 
@@ -348,6 +354,15 @@ tags:
 """
     raw_path.write_text(raw_md, encoding="utf-8")
     print(f"  {raw_type.title()}: {raw_path}")
+
+    # ── Write sidecar meta (used by delete endpoint) ──
+    meta = {
+        "analyzed": str(analyzed_path.relative_to(config.VAULT_PATH)).replace("\\", "/"),
+        "action_items": str(ai_path.relative_to(config.VAULT_PATH)).replace("\\", "/") if ai_path else None,
+        "raw": str(raw_path.relative_to(config.VAULT_PATH)).replace("\\", "/"),
+    }
+    meta_path = analyzed_dir / filename.replace(".md", ".meta.json")
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
     # ── Write custom tracker items ──
     try:

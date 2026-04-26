@@ -3,6 +3,7 @@ Filesystem operations on the GlenVault Obsidian vault.
 All paths are relative to config.VAULT_PATH.
 """
 
+import json
 import re
 from pathlib import Path
 
@@ -179,6 +180,30 @@ def scan_action_items(
                 })
 
     return items
+
+
+def delete_note(vault_relative_path: str) -> dict:
+    """Delete an analyzed note and all derived files listed in its .meta.json sidecar."""
+    fp = _vault_path() / vault_relative_path
+    meta_path = fp.with_suffix(".meta.json")
+    deleted = []
+
+    if meta_path.exists():
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        for key in ("analyzed", "action_items", "raw"):
+            rel = meta.get(key)
+            if rel:
+                p = _vault_path() / rel
+                if p.exists():
+                    p.unlink()
+                    deleted.append(rel)
+        meta_path.unlink()
+    else:
+        if fp.exists():
+            fp.unlink()
+            deleted.append(vault_relative_path)
+
+    return {"deleted": deleted}
 
 
 def toggle_action_item(vault_relative_path: str, task_index: int, completed: bool) -> None:

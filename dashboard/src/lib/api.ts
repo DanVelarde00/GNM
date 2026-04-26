@@ -97,6 +97,10 @@ export const generateWeeklyReports = (targetDate?: string) =>
     targetDate ? { target_date: targetDate } : {}
   );
 
+// Files — delete
+export const deleteNote = (path: string) =>
+  del<{ ok: boolean; deleted: string[] }>(`/files/note?path=${encodeURIComponent(path)}`);
+
 // Submit
 export const uploadFile = async (file: File, sourceType: string) => {
   const fd = new FormData();
@@ -106,3 +110,6 @@ export const uploadFile = async (file: File, sourceType: string) => {
   if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
   return res.json();
 };
+
+export const submitText = (content: string, sourceType: string, filename: string) =>
+  post<{ ok: boolean }>("/submit/text", { content, source_type: sourceType, filename });
