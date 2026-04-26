@@ -1,19 +1,31 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { getFile } from "@/lib/api";
+import { getFile, deleteNote } from "@/lib/api";
 import { useAppStore } from "@/store/useAppStore";
-import { FiEdit2, FiX } from "react-icons/fi";
+import { FiEdit2, FiX, FiTrash2 } from "react-icons/fi";
 
 export function NoteViewer() {
   const { selectedFilePath, setSelectedFilePath, setEditing } = useAppStore();
+  const queryClient = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
 
   const { data: file, isLoading } = useQuery({
     queryKey: ["file", selectedFilePath],
     queryFn: () => getFile(selectedFilePath!),
     enabled: !!selectedFilePath,
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteNote(selectedFilePath!),
+    onSuccess: () => {
+      setSelectedFilePath(null);
+      setConfirming(false);
+      queryClient.invalidateQueries({ queryKey: ["tree"] });
+    },
   });
 
   if (!selectedFilePath) {
@@ -45,8 +57,35 @@ export function NoteViewer() {
           >
             <FiEdit2 size={12} /> Edit
           </button>
+
+          {confirming ? (
+            <div className="flex items-center gap-1">
+              <span className="text-xs text-error">Delete note + all derived files?</span>
+              <button
+                onClick={() => deleteMutation.mutate()}
+                disabled={deleteMutation.isPending}
+                className="text-xs px-2 py-1 rounded bg-error text-white hover:opacity-80 transition-opacity disabled:opacity-40"
+              >
+                {deleteMutation.isPending ? "Deleting…" : "Yes"}
+              </button>
+              <button
+                onClick={() => setConfirming(false)}
+                className="text-xs px-2 py-1 rounded bg-card border border-border text-muted hover:text-foreground transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirming(true)}
+              className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-error/10 text-error hover:bg-error/20 transition-colors"
+            >
+              <FiTrash2 size={12} /> Delete
+            </button>
+          )}
+
           <button
-            onClick={() => setSelectedFilePath(null)}
+            onClick={() => { setSelectedFilePath(null); setConfirming(false); }}
             className="text-muted hover:text-foreground"
           >
             <FiX size={16} />

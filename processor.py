@@ -121,7 +121,7 @@ def build_analyzed_note(data: dict, source_filename: str, project: str) -> str:
         f"date: {date}",
         f"type: {note_type}",
         f"source: {source}",
-        f"project: \"[[{project}]]\"",
+        f"project: {project}",
         "participants:",
         participant_yaml,
         "tags:",
@@ -130,7 +130,7 @@ def build_analyzed_note(data: dict, source_filename: str, project: str) -> str:
         "",
         f"# {topic.replace('-', ' ').title()}",
         "",
-        f"**Project:** [[{project}]]  ",
+        f"**Project:** {project}  ",
         f"**Date:** {date}  ",
         f"**Participants:** {', '.join(f'[[{p}]]' for p in participants)}  ",
         f"**Source:** {source}",
@@ -181,7 +181,7 @@ def build_action_items_note(data: dict, analyzed_note_filename: str, project: st
     lines = [
         "---",
         f"date: {date}",
-        f"project: \"[[{project}]]\"",
+        f"project: {project}",
         f"source_note: \"[[{analyzed_note_filename}]]\"",
         "tags:",
         "  - action-items",
@@ -343,7 +343,7 @@ def route_to_vault(data: dict, source_path: Path) -> dict:
 date: {date_str}
 type: {raw_type}
 source: {data.get('source', 'unknown')}
-project: "[[{project}]]"
+project: {project}
 tags:
   - {raw_type}
 ---
@@ -382,7 +382,7 @@ tags:
                 item_filename = f"{date_str}-{item_slug}.md"
                 item_md = f"""---
 date: {date_str}
-project: "[[{project}]]"
+project: {project}
 tracker: "{tracker.name}"
 source_note: "[[{filename}]]"
 tags:

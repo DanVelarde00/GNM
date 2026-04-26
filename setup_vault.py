@@ -299,6 +299,62 @@ def main():
     write_file(vault_path / "Templates" / "Person.md", PERSON_TEMPLATE)
     print(f"  Templates (4 files)")
 
+    # ── Shell alias for start-my-day ────────────────────────────
+
+    script_path = Path(__file__).resolve().parent / "start-my-day.sh"
+    if script_path.exists():
+        script_path.chmod(script_path.stat().st_mode | 0o111)  # make executable
+
+    import platform
+    if platform.system() == "Darwin":
+        print()
+        print("─" * 60)
+        print("  Setting up 'start-my-day' command...")
+
+        # Detect shell config file
+        shell_rc = Path.home() / ".zshrc"
+        if not shell_rc.exists():
+            shell_rc = Path.home() / ".bash_profile"
+
+        alias_line = f'\nalias start-my-day="{script_path}"\n'
+        existing = shell_rc.read_text(encoding="utf-8") if shell_rc.exists() else ""
+
+        if "start-my-day" in existing:
+            print(f"  Alias already set in {shell_rc} — skipping.")
+        else:
+            add_alias = input(f"  Add 'start-my-day' alias to {shell_rc}? [Y/n]: ").strip().lower()
+            if not add_alias or add_alias == "y":
+                with open(shell_rc, "a", encoding="utf-8") as f:
+                    f.write(alias_line)
+                print(f"  Added alias to {shell_rc}")
+                print(f"  Run `source {shell_rc}` or open a new terminal to activate it.")
+            else:
+                print(f"  Skipped. To add manually:")
+                print(f'    echo \'alias start-my-day="{script_path}"\' >> {shell_rc}')
+
+        print()
+        print("  How it works:")
+        print("    - Type `start-my-day` in any terminal window")
+        print("    - It starts the GNM server + processor in the background")
+        print("    - Opens the dashboard at http://localhost:3000 in your browser")
+        print("    - Logs go to /tmp/gnm-server.log if you need to debug")
+
+    # ── Migrate existing notes ───────────────────────────────────
+
+    print()
+    print("─" * 60)
+    run_migrate = input("  Migrate existing vault notes to new format? [Y/n]: ").strip().lower()
+    if not run_migrate or run_migrate == "y":
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        try:
+            import migrate_vault
+            migrate_vault.VAULT = vault_path
+            migrate_vault.main()
+        except Exception as e:
+            print(f"  Migration error: {e}")
+            print("  Run manually: python migrate_vault.py")
+
     # ── Done ────────────────────────────────────────────────────
 
     print()
@@ -312,6 +368,8 @@ def main():
     print("    1. Open Obsidian -> 'Open folder as vault' -> select the vault path")
     print("    2. Enable the Dataview community plugin when prompted")
     print("    3. Drop test files into the inbox folders")
+    if platform.system() == "Darwin":
+        print("    4. Type `start-my-day` to launch everything")
     print("=" * 60)
 
 
