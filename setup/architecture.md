@@ -60,7 +60,7 @@ For each new file:
 5. Writes the analyzed note, action items, person files, and raw source copy to the vault
 6. Moves the original to `Inbox/Processed/`
 
-Claude model used: **Sonnet 4** (`claude-sonnet-4-20250514`).
+Claude model used: **Sonnet 4.6** (`claude-sonnet-4-6`).
 
 ### `run.py` — The loop
 
