@@ -13,6 +13,11 @@ load_dotenv()
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 CLAUDE_MODEL = "claude-sonnet-4-6"
 
+# ── Otter MCP ────────────────────────────────────────────────────────────────
+OTTER_MCP_URL = os.getenv("OTTER_MCP_URL", "")
+OTTER_MCP_TOKEN = os.getenv("OTTER_MCP_TOKEN", "")
+OTTER_POLL_INTERVAL = int(os.getenv("OTTER_POLL_INTERVAL", "900"))  # seconds
+
 # ── Paths ───────────────────────────────────────────────────────────────────
 # These are defaults for the prototype (Dan's machine).
 # Glen's paths will differ — setup_vault.py handles his initial config.

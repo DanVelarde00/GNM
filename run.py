@@ -3,7 +3,7 @@
 GNM Runner — Transcript processing agent.
 
 Modes:
-    python run.py              Scan once: pull from Otter + scan inboxes, process all
+    python run.py              Scan inboxes once, process all found files
     python run.py --watch      Poll continuously (every 60s)
     python run.py <file>       Process a single local file
 """
@@ -29,44 +29,24 @@ def scan_folder(folder: Path, source_type: str) -> list[tuple[Path, str]]:
 def scan_all_inboxes() -> list[tuple[Path, str]]:
     """Scan all local watched folders for new files."""
     pending = []
-    pending.extend(scan_folder(config.OTTER_GDRIVE_PATH, "otter"))
     pending.extend(scan_folder(config.INBOX_OTTER, "otter"))
     pending.extend(scan_folder(config.INBOX_INQ, "inq"))
     pending.extend(scan_folder(config.INBOX_MANUAL, "manual"))
     return pending
 
 
-def pull_from_otter() -> list[tuple[Path, str]]:
-    """Pull new transcripts from Otter.ai API into the inbox."""
-    import os
-    if not os.getenv("OTTER_EMAIL") or not os.getenv("OTTER_PASSWORD"):
-        return []
-
-    try:
-        from otter_client import OtterPoller
-        print("Checking Otter.ai for new transcripts...")
-        poller = OtterPoller(output_dir=config.INBOX_OTTER)
-        new_files = poller.poll()
-        return [(f, "otter") for f in new_files]
-    except Exception as e:
-        print(f"  Otter pull failed: {e}")
-        return []
-
 
 def print_status():
     """Print current configuration."""
-    import os
     print("=" * 60)
     print("  GNM Agent")
     print("=" * 60)
     print(f"  Vault:        {config.VAULT_PATH}")
-    print(f"  Otter GDrive: {config.OTTER_GDRIVE_PATH}")
     print(f"  Inbox:        {config.INBOX_PATH}")
-    print(f"  Otter API:    {'enabled' if os.getenv('OTTER_EMAIL') else 'disabled (no credentials)'}")
+    print(f"  Otter MCP:    {'enabled' if config.OTTER_MCP_URL else 'disabled (set OTTER_MCP_URL + OTTER_MCP_TOKEN)'}")
     print(f"  Projects:     {', '.join(config.PROJECTS)}")
 
     folders = [
-        ("Otter GDrive", config.OTTER_GDRIVE_PATH),
         ("Inbox/Otter", config.INBOX_OTTER),
         ("Inbox/Inq", config.INBOX_INQ),
         ("Inbox/Manual", config.INBOX_MANUAL),
@@ -94,19 +74,12 @@ def process_pending(pending: list[tuple[Path, str]]) -> tuple[int, int]:
 
 
 def run_once():
-    """Pull from Otter, scan all inboxes, process everything."""
+    """Scan all inboxes and process everything found."""
     print_status()
 
-    # Step 1: Pull new transcripts from Otter API
-    otter_files = pull_from_otter()
-
-    # Step 2: Scan local folders
-    local_files = scan_all_inboxes()
-
-    # Combine, dedup by filename
-    seen = set()
     pending = []
-    for f, src in otter_files + local_files:
+    seen = set()
+    for f, src in scan_all_inboxes():
         if f.name not in seen:
             seen.add(f.name)
             pending.append((f, src))
@@ -139,15 +112,9 @@ def run_watch():
 
     try:
         while True:
-            # Pull from Otter
-            otter_files = pull_from_otter()
-
-            # Scan local
-            local_files = scan_all_inboxes()
-
             seen = set()
             pending = []
-            for f, src in otter_files + local_files:
+            for f, src in scan_all_inboxes():
                 if f.name not in seen:
                     seen.add(f.name)
                     pending.append((f, src))

@@ -8,9 +8,11 @@ import {
   stopProcessor,
   restartProcessor,
   generateWeeklyReports,
+  getOtterStatus,
+  pullOtterTranscripts,
 } from "@/lib/api";
 import type { LogEntry } from "@/lib/types";
-import { FiPlay, FiSquare, FiRefreshCw, FiFileText } from "react-icons/fi";
+import { FiPlay, FiSquare, FiRefreshCw, FiFileText, FiDownload } from "react-icons/fi";
 
 export function ProcessorPanel() {
   const queryClient = useQueryClient();
@@ -50,6 +52,25 @@ export function ProcessorPanel() {
       setTimeout(() => setWeeklyResult(""), 5000);
     },
     onError: (e) => setWeeklyResult(`Error: ${e}`),
+  });
+
+  const { data: otterStatus } = useQuery({
+    queryKey: ["otter-status"],
+    queryFn: getOtterStatus,
+  });
+
+  const [otterResult, setOtterResult] = useState<string>("");
+  const pullOtter = useMutation({
+    mutationFn: pullOtterTranscripts,
+    onSuccess: (data) => {
+      setOtterResult(
+        data.pulled === 0
+          ? "No new transcripts"
+          : `Pulled ${data.pulled} transcript(s): ${data.files.join(", ")}`
+      );
+      setTimeout(() => setOtterResult(""), 6000);
+    },
+    onError: (e) => setOtterResult(`Error: ${e}`),
   });
 
   // WebSocket for live log
@@ -117,6 +138,15 @@ export function ProcessorPanel() {
         )}
 
         <div className="flex items-center gap-2 ml-auto">
+          {otterStatus?.configured && (
+            <button
+              onClick={() => pullOtter.mutate()}
+              disabled={pullOtter.isPending}
+              className="flex items-center gap-1 text-xs px-3 py-1.5 rounded bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 disabled:opacity-50"
+            >
+              <FiDownload size={12} /> {pullOtter.isPending ? "Pulling..." : "Pull Otter"}
+            </button>
+          )}
           <button
             onClick={() => weekly.mutate()}
             disabled={weekly.isPending}
@@ -150,6 +180,9 @@ export function ProcessorPanel() {
         </div>
         {weeklyResult && (
           <span className="text-xs text-accent ml-2">{weeklyResult}</span>
+        )}
+        {otterResult && (
+          <span className="text-xs text-blue-400 ml-2">{otterResult}</span>
         )}
       </div>
 

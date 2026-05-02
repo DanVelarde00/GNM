@@ -101,6 +101,11 @@ export const generateWeeklyReports = (targetDate?: string) =>
 export const deleteNote = (path: string) =>
   del<{ ok: boolean; deleted: string[] }>(`/files/note?path=${encodeURIComponent(path)}`);
 
+// Otter
+export const getOtterStatus = () => get<{ configured: boolean }>("/otter/status");
+export const pullOtterTranscripts = () =>
+  post<{ ok: boolean; pulled: number; files: string[] }>("/otter/pull");
+
 // Submit
 export const uploadFile = async (file: File, sourceType: string) => {
   const fd = new FormData();
