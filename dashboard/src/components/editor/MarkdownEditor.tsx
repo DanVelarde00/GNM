@@ -50,11 +50,14 @@ export function MarkdownEditor() {
     mutation.mutate({ path: selectedFilePath, content });
   }, [selectedFilePath, mutation]);
 
+  const handleSaveRef = useRef(handleSave);
+  useEffect(() => { handleSaveRef.current = handleSave; }, [handleSave]);
+
   useEffect(() => {
     if (!editorRef.current || !file) return;
 
     const saveKeymap = keymap.of([
-      { key: "Mod-s", run: () => { handleSave(); return true; } },
+      { key: "Mod-s", run: () => { handleSaveRef.current(); return true; } },
     ]);
 
     const state = EditorState.create({
@@ -73,7 +76,8 @@ export function MarkdownEditor() {
     viewRef.current = view;
 
     return () => { view.destroy(); };
-  }, [file, handleSave]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [file]);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">

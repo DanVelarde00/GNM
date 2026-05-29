@@ -16,7 +16,6 @@ export function ChatPanel() {
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [sources, setSources] = useState<string[]>([]);
-  const [projectFilter, setProjectFilter] = useState<string>("");
   const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
