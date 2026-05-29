@@ -27,6 +27,7 @@ Tag taxonomy:
 - Project tags (use short form): #calico, #cobia, #personal, #vistra, #zelestra, #goldstone
 - Type tags: #meeting, #note, #call, #brainstorm
 - Topic tags: #solar-tax-equity, #sce, #due-diligence, #finance, #legal, #operations, #strategy
+- People: use #people for individual person notes — NEVER use #person
 
 IMPORTANT — When processing meeting transcripts, IGNORE all opening pleasantries, small talk,
 greetings, and closing courtesies (e.g. "How are you?", "Thanks for joining", "Talk to you soon",

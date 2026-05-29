@@ -40,6 +40,12 @@ When Glen reports something is broken or isn't working:
 When Glen asks "is processing working?" or "what did it process today?" or similar:
 - Call get_processor_status to get live status and recent logs, then summarise in plain language.
 
+When Glen asks to restart, reset, or reboot the processor:
+- Call restart_processor. Confirm it's back up in plain language.
+
+When Glen asks to pull, sync, or fetch new notes from Otter:
+- Call pull_otter_transcripts. Tell Glen how many new transcripts were pulled, or that Otter isn't configured if that's the case.
+
 Known projects: {projects}
 
 ## Context Documents
@@ -62,6 +68,23 @@ TOOLS = [
             "properties": {},
             "required": [],
         },
+    },
+    {
+        "name": "restart_processor",
+        "description": (
+            "Restarts the background note processor subprocess. "
+            "Call when Glen asks to restart, reset, or reboot the processor."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "pull_otter_transcripts",
+        "description": (
+            "Triggers an immediate pull of new transcripts from Otter.ai outside the normal polling cycle. "
+            "Call when Glen asks to pull, sync, or fetch new notes from Otter. "
+            "Returns the number of new transcripts pulled."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "name": "file_bug_report",
@@ -114,18 +137,29 @@ def _build_context(query: str, project_filter: str | None) -> tuple[str, list[st
 
 # ── Tool executor ─────────────────────────────────────────────────────────────
 
-def _execute_tool(name: str, tool_input: dict) -> str:
+async def _execute_tool(name: str, tool_input: dict) -> str:
     """Execute a named tool and return the result as a JSON string."""
+    import asyncio
+
     if name == "get_processor_status":
         pm = ProcessManager.instance()
         status = pm.get_status()
         logs = pm.get_recent_log(50)
         log_lines = [entry.get("msg", "") for entry in logs]
-        result = {
-            "status": status,
-            "recent_logs": log_lines,
-        }
-        return json.dumps(result, indent=2)
+        return json.dumps({"status": status, "recent_logs": log_lines}, indent=2)
+
+    if name == "restart_processor":
+        pm = ProcessManager.instance()
+        await asyncio.to_thread(pm.restart)
+        status = pm.get_status()
+        return json.dumps({"ok": True, "status": status})
+
+    if name == "pull_otter_transcripts":
+        from api.services import otter_service
+        if not otter_service.is_configured():
+            return json.dumps({"ok": False, "message": "Otter MCP not configured (OTTER_MCP_URL / OTTER_MCP_TOKEN not set)."})
+        new_files = await asyncio.to_thread(otter_service.pull_new_transcripts)
+        return json.dumps({"ok": True, "pulled": len(new_files), "files": [f.name for f in new_files]})
 
     if name == "file_bug_report":
         title = tool_input.get("title", "Bug report from Glen")
@@ -204,12 +238,16 @@ async def stream_response(
                 continue
 
             # Notify Glen visually so he doesn't see a blank pause
-            if block.name == "file_bug_report":
-                yield {"type": "token", "content": "\n\n_Filing a report with Dan..._\n\n"}
-            elif block.name == "get_processor_status":
-                yield {"type": "token", "content": "\n\n_Checking the processor..._\n\n"}
+            notices = {
+                "file_bug_report": "\n\n_Filing a report with Dan..._\n\n",
+                "get_processor_status": "\n\n_Checking the processor..._\n\n",
+                "restart_processor": "\n\n_Restarting the processor..._\n\n",
+                "pull_otter_transcripts": "\n\n_Pulling new transcripts from Otter..._\n\n",
+            }
+            if block.name in notices:
+                yield {"type": "token", "content": notices[block.name]}
 
-            result_str = _execute_tool(block.name, block.input)
+            result_str = await _execute_tool(block.name, block.input)
 
             tool_results.append({
                 "type": "tool_result",
