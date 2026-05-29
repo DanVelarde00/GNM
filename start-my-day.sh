@@ -14,11 +14,14 @@ fi
 
 echo "Starting GNM..."
 
-# Use conda env if available, otherwise fall back to plain python
-if command -v conda &>/dev/null && conda env list | grep -q base-dev; then
+# Use .venv if present, then conda, then plain python
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$SCRIPT_DIR/.venv/bin/python" ]; then
+    PYTHON="$SCRIPT_DIR/.venv/bin/python"
+elif command -v conda &>/dev/null && conda env list | grep -q base-dev; then
     PYTHON="conda run -n base-dev python"
 else
-    PYTHON="python"
+    PYTHON="python3"
 fi
 
 # Start server in background, redirect logs to a temp file

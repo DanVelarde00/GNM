@@ -54,6 +54,11 @@ INBOX_PROCESSED = INBOX_PATH / "Processed"
 # ── Known projects ──────────────────────────────────────────────────────────
 PROJECTS = ["Calico", "Cobia", "Goldstone", "Personal", "Vistra", "Zelestra"]
 
+# ── Project aliases — map alternate names to canonical project names ─────────
+PROJECT_ALIASES = {
+    "Goldstone": "Calico",
+}
+
 # ── File extensions we process ──────────────────────────────────────────────
 SUPPORTED_EXTENSIONS = {".txt", ".docx", ".pdf", ".md"}
 

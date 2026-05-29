@@ -4,7 +4,7 @@ Supports tool use: get_processor_status, file_bug_report.
 """
 
 import json
-from typing import AsyncIterator
+from typing import AsyncIterator, Optional, Tuple, List
 
 import anthropic
 
@@ -128,7 +128,7 @@ TOOLS = [
 
 # ── Context builder ───────────────────────────────────────────────────────────
 
-def _build_context(query: str, project_filter: str | None) -> tuple[str, list[str]]:
+def _build_context(query: str, project_filter: Optional[str]) -> Tuple[str, List[str]]:
     """Search vault and build context string. Returns (context_block, source_paths)."""
     results = search_service.search(q=query, project=project_filter, limit=8)
     if not results:
@@ -211,7 +211,7 @@ async def _execute_tool(name: str, tool_input: dict) -> str:
 async def stream_response(
     message: str,
     history: list[ChatMessage],
-    project_filter: str | None = None,
+    project_filter: Optional[str] = None,
 ) -> AsyncIterator[dict]:
     """
     Yields dicts:

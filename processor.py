@@ -10,6 +10,7 @@ import re
 import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Optional
 
 import anthropic
 from docx import Document
@@ -279,6 +280,7 @@ WHERE !completed
 
 def route_to_vault(data: dict, source_path: Path) -> dict:
     project = data.get("project", "General")
+    project = config.PROJECT_ALIASES.get(project, project)
 
     # Validate project — create flat structure if new
     project_dir = config.VAULT_PATH / "Projects" / project
@@ -386,7 +388,7 @@ def mark_processed(source_path: Path):
 
 # ── Main processing function ───────────────────────────────────────────────
 
-def process_file(file_path: Path, source_type: str = "otter") -> dict | None:
+def process_file(file_path: Path, source_type: str = "otter") -> Optional[dict]:
     print(f"\n{'='*60}")
     print(f"  Processing: {file_path.name}")
     print(f"  Source: {source_type}")

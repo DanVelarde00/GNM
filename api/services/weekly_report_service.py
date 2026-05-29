@@ -5,6 +5,7 @@ sends to Claude for consolidation, writes Weekly Report .md files.
 
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Optional, Tuple
 
 import anthropic
 
@@ -30,7 +31,7 @@ Respond with valid JSON only:
 """
 
 
-def _get_week_range(target_date: datetime | None = None) -> tuple[datetime, datetime, str]:
+def _get_week_range(target_date: Optional[datetime] = None) -> Tuple[datetime, datetime, str]:
     """Get the Monday-Sunday range and folder name for a given date's week."""
     if target_date is None:
         target_date = datetime.now()
@@ -140,7 +141,7 @@ def _build_report_md(data: dict, project: str, week_folder: str, date_str: str) 
     return "\n".join(lines)
 
 
-def generate_weekly_reports(target_date: datetime | None = None) -> list[dict]:
+def generate_weekly_reports(target_date: Optional[datetime] = None) -> list[dict]:
     """Generate weekly reports for all projects that have notes this week.
     Returns list of {project, path, notes_count} for each report written.
     Reports are written to Projects/<P>/_Weekly Reports/<week_folder>.md.

@@ -5,6 +5,7 @@ Usage:
   python server.py --dev    # Dev: FastAPI on :8000 + Next.js on :3000
 """
 
+import os
 import subprocess
 import sys
 import atexit
@@ -14,6 +15,11 @@ import uvicorn
 
 DASHBOARD_DIR = Path(__file__).parent / "dashboard"
 DEV_MODE = "--dev" in sys.argv
+
+# Ensure Homebrew Node is on PATH
+_node_bin = "/opt/homebrew/opt/node@20/bin"
+if _node_bin not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = _node_bin + ":" + os.environ.get("PATH", "")
 
 _next_proc = None
 

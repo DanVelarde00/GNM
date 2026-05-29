@@ -9,6 +9,7 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
+from typing import Optional
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
@@ -17,10 +18,10 @@ class ProcessManager:
     _instance = None
 
     def __init__(self):
-        self._proc: subprocess.Popen | None = None
+        self._proc: Optional[subprocess.Popen] = None
         self._log: deque[dict] = deque(maxlen=500)
-        self._reader_thread: threading.Thread | None = None
-        self._start_time: float | None = None
+        self._reader_thread: Optional[threading.Thread] = None
+        self._start_time: Optional[float] = None
         self._lock = threading.Lock()
         # Subscribers: list of asyncio.Queue for WebSocket push
         self._subscribers: list = []

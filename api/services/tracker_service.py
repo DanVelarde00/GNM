@@ -7,6 +7,7 @@ import json
 import uuid
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import config
 from api.models.tracker_models import TrackerCreate, TrackerDefinition, TrackerItem
@@ -55,7 +56,7 @@ def create_tracker(req: TrackerCreate) -> TrackerDefinition:
     return tracker
 
 
-def update_tracker(tracker_id: str, updates: dict) -> TrackerDefinition | None:
+def update_tracker(tracker_id: str, updates: dict) -> Optional[TrackerDefinition]:
     trackers = load_trackers()
     for i, t in enumerate(trackers):
         if t.id == tracker_id:
@@ -78,7 +79,7 @@ def delete_tracker(tracker_id: str) -> bool:
     return False
 
 
-def get_tracker(tracker_id: str) -> TrackerDefinition | None:
+def get_tracker(tracker_id: str) -> Optional[TrackerDefinition]:
     for t in load_trackers():
         if t.id == tracker_id:
             return t

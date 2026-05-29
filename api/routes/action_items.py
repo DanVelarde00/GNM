@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import APIRouter
 from pydantic import BaseModel
 
@@ -14,9 +16,9 @@ class ToggleRequest(BaseModel):
 
 @router.get("")
 def get_action_items(
-    project: str | None = None,
-    person: str | None = None,
-    completed: bool | None = None,
+    project: Optional[str] = None,
+    person: Optional[str] = None,
+    completed: Optional[bool] = None,
 ):
     return vault_service.scan_action_items(project=project, person=person, completed=completed)
 

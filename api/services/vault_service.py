@@ -6,6 +6,7 @@ All paths are relative to config.VAULT_PATH.
 import json
 import re
 from pathlib import Path
+from typing import Optional
 
 import yaml
 
@@ -128,9 +129,9 @@ _TASK_RE = re.compile(r"^- \[([ xX])\] (.+)$", re.MULTILINE)
 
 
 def scan_action_items(
-    project: str | None = None,
-    person: str | None = None,
-    completed: bool | None = None,
+    project: Optional[str] = None,
+    person: Optional[str] = None,
+    completed: Optional[bool] = None,
 ) -> list[dict]:
     """Scan action items from flat project notes (Projects/<P>/*.md only — top-level)."""
     projects_dir = _vault_path() / "Projects"

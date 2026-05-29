@@ -5,6 +5,7 @@ Index stored at config.SEARCH_INDEX_PATH.
 
 import os
 from pathlib import Path
+from typing import Optional
 
 from whoosh import index as whoosh_index
 from whoosh.fields import Schema, TEXT, ID, KEYWORD, DATETIME, STORED
@@ -133,8 +134,8 @@ def index_file(vault_relative_path: str) -> None:
 
 def search(
     q: str,
-    project: str | None = None,
-    file_type: str | None = None,
+    project: Optional[str] = None,
+    file_type: Optional[str] = None,
     limit: int = 20,
 ) -> list[dict]:
     ix = _get_or_create_index()
