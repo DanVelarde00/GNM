@@ -3,7 +3,7 @@ import asyncio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routes import files, search, chat, processor, action_items, trackers, submit, weekly_reports, otter
+from api.routes import files, search, chat, processor, action_items, trackers, submit, weekly_reports, otter, graph
 from api.services.process_manager import ProcessManager
 from api.services import search_service
 import config
@@ -29,6 +29,7 @@ def create_app() -> FastAPI:
     app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
     app.include_router(weekly_reports.router, prefix="/api/weekly-reports", tags=["weekly-reports"])
     app.include_router(otter.router, prefix="/api/otter", tags=["otter"])
+    app.include_router(graph.router, prefix="/api/graph", tags=["graph"])
 
     @app.get("/api/health")
     def health():

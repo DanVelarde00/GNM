@@ -83,6 +83,23 @@ export interface ChatMessage {
   content: string;
 }
 
+export interface GraphNode {
+  id: string;
+  label: string;
+  project: string;
+  type: "note" | "person" | "other";
+}
+
+export interface GraphLink {
+  source: string;
+  target: string;
+}
+
+export interface GraphData {
+  nodes: GraphNode[];
+  links: GraphLink[];
+}
+
 export interface ChatChunk {
   type: "sources" | "token" | "done" | "error";
   content?: string;

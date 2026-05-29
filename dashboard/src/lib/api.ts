@@ -8,6 +8,7 @@ import type {
   TrackerItem,
   ProcessorStatus,
   LogEntry,
+  GraphData,
 } from "./types";
 
 const BASE = "/api";
@@ -105,6 +106,9 @@ export const deleteNote = (path: string) =>
 export const getOtterStatus = () => get<{ configured: boolean }>("/otter/status");
 export const pullOtterTranscripts = () =>
   post<{ ok: boolean; pulled: number; files: string[] }>("/otter/pull");
+
+// Graph
+export const getGraph = () => get<GraphData>("/graph");
 
 // Submit
 export const uploadFile = async (file: File, sourceType: string) => {
