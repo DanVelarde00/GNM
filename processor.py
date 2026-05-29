@@ -125,14 +125,13 @@ def parse_response(response_text: str) -> dict:
         text = re.sub(r"^```(?:json)?\n?", "", text)
         text = re.sub(r"\n?```$", "", text)
         text = text.strip()
-    # Fallback: extract the first complete JSON object even if Claude prefixed prose
-    if not text.startswith("{"):
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if match:
-            text = match.group()
-    if not text:
-        raise ValueError(f"Could not extract JSON from Claude response: {response_text[:200]!r}")
-    return json.loads(text)
+    # Use raw_decode starting at the first '{': parses exactly one JSON object
+    # and ignores any trailing text/comments Claude appended after the closing '}'.
+    start = text.find("{")
+    if start == -1:
+        raise ValueError(f"No JSON object found in Claude response: {text[:200]!r}")
+    obj, _ = json.JSONDecoder().raw_decode(text, start)
+    return obj
 
 
 # ── Build Obsidian markdown with wiki-links ─────────────────────────────────
