@@ -46,6 +46,9 @@ When Glen asks to restart, reset, or reboot the processor:
 When Glen asks to pull, sync, or fetch new notes from Otter:
 - Call pull_otter_transcripts. Tell Glen how many new transcripts were pulled, or that Otter isn't configured if that's the case.
 
+When Glen asks to update the app, get the latest code, or pull from GitHub:
+- Call update_server. It will pull the latest code and restart everything. Warn Glen the dashboard will go offline for a few seconds while it restarts.
+
 Known projects: {projects}
 
 ## Context Documents
@@ -83,6 +86,15 @@ TOOLS = [
             "Triggers an immediate pull of new transcripts from Otter.ai outside the normal polling cycle. "
             "Call when Glen asks to pull, sync, or fetch new notes from Otter. "
             "Returns the number of new transcripts pulled."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "update_server",
+        "description": (
+            "Pulls the latest code from GitHub (git pull) and restarts the server. "
+            "Call when Glen asks to update the app, get new code, or pull from GitHub. "
+            "The server will be unavailable for a few seconds while it restarts."
         ),
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
@@ -160,6 +172,31 @@ async def _execute_tool(name: str, tool_input: dict) -> str:
             return json.dumps({"ok": False, "message": "Otter MCP not configured (OTTER_MCP_URL / OTTER_MCP_TOKEN not set)."})
         new_files = await asyncio.to_thread(otter_service.pull_new_transcripts)
         return json.dumps({"ok": True, "pulled": len(new_files), "files": [f.name for f in new_files]})
+
+    if name == "update_server":
+        import os
+        import pathlib
+        import subprocess
+        import sys
+        import threading
+        import time
+
+        project_root = pathlib.Path(__file__).parent.parent.parent
+        pull = await asyncio.to_thread(
+            subprocess.run,
+            ["git", "pull", "origin", "main"],
+            capture_output=True,
+            text=True,
+            cwd=str(project_root),
+        )
+        pull_out = (pull.stdout.strip() or pull.stderr.strip() or "No output").splitlines()
+
+        def _restart():
+            time.sleep(3)
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+
+        threading.Thread(target=_restart, daemon=False).start()
+        return json.dumps({"ok": True, "pull": pull_out, "restarting": True})
 
     if name == "file_bug_report":
         title = tool_input.get("title", "Bug report from Glen")
@@ -243,6 +280,7 @@ async def stream_response(
                 "get_processor_status": "\n\n_Checking the processor..._\n\n",
                 "restart_processor": "\n\n_Restarting the processor..._\n\n",
                 "pull_otter_transcripts": "\n\n_Pulling new transcripts from Otter..._\n\n",
+                "update_server": "\n\n_Pulling latest code from GitHub..._\n\n",
             }
             if block.name in notices:
                 yield {"type": "token", "content": notices[block.name]}
