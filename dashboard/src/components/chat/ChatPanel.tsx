@@ -6,10 +6,13 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { getProjects } from "@/lib/api";
 import type { ChatMessage } from "@/lib/types";
-import { FiSend, FiFile } from "react-icons/fi";
+import { FiSend, FiFile, FiTrash2 } from "react-icons/fi";
+
+const CHAT_STORAGE_KEY = "gnm_chat_history";
 
 export function ChatPanel() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [hydrated, setHydrated] = useState(false);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [sources, setSources] = useState<string[]>([]);
@@ -21,6 +24,32 @@ export function ChatPanel() {
     queryKey: ["projects"],
     queryFn: getProjects,
   });
+
+  // Load history from localStorage on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(CHAT_STORAGE_KEY);
+      if (stored) setMessages(JSON.parse(stored));
+    } catch {
+      // ignore corrupt storage
+    }
+    setHydrated(true);
+  }, []);
+
+  // Persist history to localStorage whenever it changes
+  useEffect(() => {
+    if (!hydrated) return;
+    if (messages.length === 0) {
+      localStorage.removeItem(CHAT_STORAGE_KEY);
+    } else {
+      localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(messages));
+    }
+  }, [messages, hydrated]);
+
+  const clearHistory = useCallback(() => {
+    setMessages([]);
+    localStorage.removeItem(CHAT_STORAGE_KEY);
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -101,6 +130,15 @@ export function ChatPanel() {
             <option key={p.name} value={p.name}>{p.name}</option>
           ))}
         </select>
+        {messages.length > 0 && (
+          <button
+            onClick={clearHistory}
+            title="Clear chat history"
+            className="ml-auto text-muted hover:text-foreground transition-colors"
+          >
+            <FiTrash2 size={14} />
+          </button>
+        )}
       </div>
 
       {/* Sources */}

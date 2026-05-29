@@ -159,7 +159,7 @@ def pull_new_transcripts() -> list[Path]:
         out_path.write_text(content, encoding="utf-8")
 
         pulled_ids.add(t["id"])
+        _save_state(pulled_ids)  # save after each so a mid-loop crash doesn't re-download
         new_files.append(out_path)
 
-    _save_state(pulled_ids)
     return new_files

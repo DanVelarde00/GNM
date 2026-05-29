@@ -120,10 +120,18 @@ def parse_date(date_str: str) -> datetime:
 
 def parse_response(response_text: str) -> dict:
     text = response_text.strip()
-    # Strip code fences if Claude wraps it anyway
+    # Strip code fences if Claude wraps them around the JSON
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\n?", "", text)
         text = re.sub(r"\n?```$", "", text)
+        text = text.strip()
+    # Fallback: extract the first complete JSON object even if Claude prefixed prose
+    if not text.startswith("{"):
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if match:
+            text = match.group()
+    if not text:
+        raise ValueError(f"Could not extract JSON from Claude response: {response_text[:200]!r}")
     return json.loads(text)
 
 
@@ -388,6 +396,12 @@ def process_file(file_path: Path, source_type: str = "otter") -> dict | None:
         print("  SKIP: Empty file")
         return None
 
+    # Truncate to avoid hitting context limits on very long transcripts
+    MAX_CHARS = 100_000
+    if len(transcript) > MAX_CHARS:
+        print(f"  Truncating transcript: {len(transcript)} -> {MAX_CHARS} chars")
+        transcript = transcript[:MAX_CHARS]
+
     print(f"  Transcript: {len(transcript)} chars")
 
     # Call Claude
@@ -395,7 +409,7 @@ def process_file(file_path: Path, source_type: str = "otter") -> dict | None:
     client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
     message = client.messages.create(
         model=config.CLAUDE_MODEL,
-        max_tokens=4096,
+        max_tokens=8096,
         system=SYSTEM_PROMPT,
         messages=[
             {
@@ -405,7 +419,13 @@ def process_file(file_path: Path, source_type: str = "otter") -> dict | None:
         ],
     )
 
+    if not message.content:
+        raise ValueError(f"Claude returned empty content (stop_reason: {message.stop_reason})")
+
     response_text = message.content[0].text
+    if not response_text.strip():
+        raise ValueError(f"Claude returned empty text (stop_reason: {message.stop_reason})")
+
     print(f"  Response: {len(response_text)} chars")
 
     # Parse JSON
