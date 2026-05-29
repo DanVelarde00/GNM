@@ -283,8 +283,15 @@ def route_to_vault(data: dict, source_path: Path) -> dict:
     project_dir = config.VAULT_PATH / "Projects" / project
     project_dir.mkdir(parents=True, exist_ok=True)
 
-    # Date
+    # Date — prefer Claude's value; fall back to filename date if Claude's is
+    # wildly wrong (>180 days from the filename's embedded date).
     date = parse_date(data.get("date"))
+    fn_match = re.match(r"(\d{4}-\d{2}-\d{2})", source_path.stem)
+    if fn_match:
+        fn_date = parse_date(fn_match.group(1))
+        if abs((date - fn_date).days) > 180:
+            print(f"  WARNING: Claude date {date.date()} is far from filename date {fn_date.date()} — using filename date")
+            date = fn_date
     date_str = date.strftime("%Y-%m-%d")
 
     # ── Deterministic filename from source identity (Fix 5) ──
@@ -406,6 +413,8 @@ def process_file(file_path: Path, source_type: str = "otter") -> dict | None:
     # Call Claude
     print("  Calling Claude...")
     client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+    # Inject today fresh per-call so the date fallback is never stale
+    today = datetime.now().strftime("%Y-%m-%d")
     message = client.messages.create(
         model=config.CLAUDE_MODEL,
         max_tokens=8096,
@@ -413,7 +422,10 @@ def process_file(file_path: Path, source_type: str = "otter") -> dict | None:
         messages=[
             {
                 "role": "user",
-                "content": f"Process this {source_type} transcript:\n\n{transcript}"
+                "content": (
+                    f"Today's date (use as fallback only if no date is in the text): {today}\n\n"
+                    f"Process this {source_type} transcript:\n\n{transcript}"
+                ),
             }
         ],
     )
