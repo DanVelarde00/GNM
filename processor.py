@@ -23,6 +23,7 @@ SYSTEM_PROMPT = """You are a note analysis assistant for Glen at Calico Infrastr
 You process meeting transcripts and notes into structured Obsidian-compatible markdown.
 
 Known projects: {projects}
+Project aliases (always resolve to the canonical name in your response): {aliases}
 
 Tag taxonomy:
 - Project tags (use short form): #calico, #cobia, #personal, #vistra, #zelestra, #goldstone
@@ -61,7 +62,11 @@ The JSON schema:
   ],
   "decisions": ["Decision one", "Decision two"]
 }}
-""".format(projects=", ".join(config.PROJECTS), today=datetime.now().strftime("%Y-%m-%d"))
+""".format(
+    projects=", ".join(config.PROJECTS),
+    aliases=", ".join(f"{alias} → {canonical}" for alias, canonical in config.PROJECT_ALIASES.items()) or "none",
+    today=datetime.now().strftime("%Y-%m-%d"),
+)
 
 
 # ── Slug helper ─────────────────────────────────────────────────────────────

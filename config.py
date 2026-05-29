@@ -59,6 +59,9 @@ PROJECT_ALIASES = {
     "Goldstone": "Calico",
 }
 
+# ── Inbox cleanup ───────────────────────────────────────────────────────────
+PROCESSED_RETENTION_DAYS = int(os.getenv("GNM_PROCESSED_RETENTION_DAYS", "30"))
+
 # ── File extensions we process ──────────────────────────────────────────────
 SUPPORTED_EXTENSIONS = {".txt", ".docx", ".pdf", ".md"}
 

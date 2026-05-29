@@ -10,10 +10,26 @@ Modes:
 
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 import config
 from processor import process_file
+
+
+def cleanup_processed(dry_run: bool = False) -> int:
+    """Delete files from Inbox/Processed/ older than PROCESSED_RETENTION_DAYS. Returns count removed."""
+    folder = config.INBOX_PROCESSED
+    if not folder.exists():
+        return 0
+    cutoff = datetime.now().timestamp() - config.PROCESSED_RETENTION_DAYS * 86400
+    removed = 0
+    for f in folder.iterdir():
+        if f.is_file() and f.stat().st_mtime < cutoff:
+            if not dry_run:
+                f.unlink()
+            removed += 1
+    return removed
 
 
 def scan_folder(folder: Path, source_type: str) -> list[tuple[Path, str]]:
@@ -133,6 +149,10 @@ def run_once():
 
     processed, errors = process_pending(pending)
 
+    removed = cleanup_processed()
+    if removed:
+        print(f"  Cleaned up {removed} file(s) from Processed/ (>{config.PROCESSED_RETENTION_DAYS}d old)")
+
     print()
     print("=" * 60)
     print(f"  Done. Processed: {processed}  Errors: {errors}")
@@ -186,6 +206,9 @@ def run_watch():
                 p, e = process_pending(pending)
                 total_processed += p
                 total_errors += e
+                removed = cleanup_processed()
+                if removed:
+                    print(f"[{ts}] Cleaned up {removed} file(s) from Processed/ (>{config.PROCESSED_RETENTION_DAYS}d old)")
                 print(f"[{ts}] Session total: {total_processed} processed, {total_errors} errors")
 
             time.sleep(60)
