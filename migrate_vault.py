@@ -49,7 +49,7 @@ def _project_slug(name: str) -> str:
 
 # ── Frontmatter helpers ──────────────────────────────────────────────────────
 
-def _parse_fm(raw: str) -> tuple[str, str, str, str] | None:
+def _parse_fm(raw: str):  # -> Optional[tuple[str, str, str, str]]
     """Return (open_fence, fm_text, close_fence, body) or None."""
     m = _FM_RE.match(raw)
     return m.groups() if m else None
@@ -85,7 +85,7 @@ def _fix_project_wikilink(fm_text: str) -> tuple[str, bool]:
     return new, changed
 
 
-def _get_project_from_fm(fm_text: str) -> str | None:
+def _get_project_from_fm(fm_text: str):  # -> Optional[str]
     m = re.search(r"^project:\s*(\S+)", fm_text, re.MULTILINE)
     if not m:
         return None
