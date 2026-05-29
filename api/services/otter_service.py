@@ -1,5 +1,5 @@
 """
-Otter MCP service — polls Otter.ai via Claude's MCP integration.
+Otter MCP service - polls Otter.ai via Claude's MCP integration.
 
 Requires OTTER_MCP_URL and OTTER_MCP_TOKEN in .env.
 Falls back silently if not configured.
@@ -48,6 +48,13 @@ def pull_new_transcripts() -> list[Path]:
     """
     Call Otter MCP via Claude, pull any transcripts not yet in state,
     write them to INBOX_OTTER, return list of new file paths.
+
+    Throttled to config.OTTER_MAX_PER_CYCLE transcripts per call so a large
+    backlog never causes a multi-hour stall. Skipped transcripts are NOT added
+    to pulled_ids and will be fetched on the next pull cycle.
+
+    Each step is timed and logged so dashboard log streaming reveals the
+    real bottleneck (list call vs. per-transcript fetch).
     """
     if not is_configured():
         return []
@@ -56,6 +63,7 @@ def pull_new_transcripts() -> list[Path]:
     pulled_ids = _load_state()
 
     # Step 1: list available transcripts
+    t_list_start = time.perf_counter()
     list_response = client.beta.messages.create(
         model=config.CLAUDE_MODEL,
         max_tokens=2048,
@@ -75,6 +83,7 @@ def pull_new_transcripts() -> list[Path]:
             ),
         }],
     )
+    t_list_elapsed = time.perf_counter() - t_list_start
 
     raw = "".join(
         b.text for b in list_response.content if hasattr(b, "text")
@@ -83,19 +92,36 @@ def pull_new_transcripts() -> list[Path]:
     # Extract JSON array from response
     match = re.search(r"\[.*\]", raw, re.DOTALL)
     if not match:
+        print(f"[Otter] listed 0 transcripts in {t_list_elapsed:.1f}s (no JSON array in response)")
         return []
 
     transcripts = json.loads(match.group())
     new_transcripts = [t for t in transcripts if t["id"] not in pulled_ids]
 
+    print(f"[Otter] listed {len(transcripts)} transcript(s) in {t_list_elapsed:.1f}s,"
+          f" {len(new_transcripts)} new")
+
     if not new_transcripts:
         return []
+
+    # Sort oldest-first so the backlog drains in chronological order
+    new_transcripts.sort(key=lambda t: t.get("created_at", ""), reverse=False)
+
+    # Throttle: cap to OTTER_MAX_PER_CYCLE per pull; remainder picked up next cycle
+    if len(new_transcripts) > config.OTTER_MAX_PER_CYCLE:
+        print(
+            f"[Otter] {len(new_transcripts)} new, pulling first {config.OTTER_MAX_PER_CYCLE}"
+            f" this cycle (throttle={config.OTTER_MAX_PER_CYCLE},"
+            f" {len(new_transcripts) - config.OTTER_MAX_PER_CYCLE} deferred)"
+        )
+        new_transcripts = new_transcripts[:config.OTTER_MAX_PER_CYCLE]
 
     new_files: list[Path] = []
     config.INBOX_OTTER.mkdir(parents=True, exist_ok=True)
 
     for t in new_transcripts:
         # Step 2: fetch full text for each new transcript
+        t_fetch_start = time.perf_counter()
         text_response = client.beta.messages.create(
             model=config.CLAUDE_MODEL,
             max_tokens=8096,
@@ -114,13 +140,18 @@ def pull_new_transcripts() -> list[Path]:
                 ),
             }],
         )
+        t_fetch_elapsed = time.perf_counter() - t_fetch_start
 
         content = "".join(
             b.text for b in text_response.content if hasattr(b, "text")
         ).strip()
 
+        title = t.get("title", t["id"])
         if not content:
+            print(f"[Otter] fetched '{title}' in {t_fetch_elapsed:.1f}s (empty - skipping)")
             continue
+
+        print(f"[Otter] fetched '{title}' in {t_fetch_elapsed:.1f}s ({len(content)} chars)")
 
         date_str = t.get("created_at", time.strftime("%Y-%m-%d"))[:10]
         filename = f"{date_str}-{_slug(t['title'])}.txt"

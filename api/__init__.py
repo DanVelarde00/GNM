@@ -36,6 +36,15 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     async def startup():
+        # One-time vault cleanup on first launch: flatten any old nested structure,
+        # move People to a global folder. Backs up first, runs once, then no-ops.
+        try:
+            import migrate_vault
+            res = await asyncio.to_thread(migrate_vault.auto_migrate_once)
+            if res.get("ran"):
+                print(f"[GNM] Vault cleaned up to flat layout. Rollback copy: {res.get('backup')}")
+        except Exception as e:
+            print(f"[GNM] Auto-migration skipped due to error: {e}")
         ProcessManager.instance().start()
         search_service.build_full_index()
         if config.OTTER_MCP_URL and config.OTTER_MCP_TOKEN:

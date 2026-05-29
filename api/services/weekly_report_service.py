@@ -41,18 +41,23 @@ def _get_week_range(target_date: datetime | None = None) -> tuple[datetime, date
     return week_start, week_end, week_folder
 
 
-def _collect_week_notes(project_dir: Path, week_folder: str) -> list[tuple[str, str]]:
-    """Collect all analyzed notes for a project in a given week folder.
-    Returns list of (filename, content) tuples."""
-    year = str(datetime.now().year)
-    notes_dir = project_dir / "AI Analyzed Notes" / year / week_folder
-    if not notes_dir.is_dir():
-        return []
-
+def _collect_week_notes(project_dir: Path, week_start: datetime, week_end: datetime) -> list[tuple[str, str]]:
+    """Collect analyzed notes for a project whose frontmatter date falls in [week_start, week_end].
+    Reads top-level *.md files only (flat layout). Returns list of (filename, content) tuples.
+    """
     notes = []
-    for md in sorted(notes_dir.glob("*.md")):
+    for md in sorted(project_dir.glob("*.md")):
         content = md.read_text(encoding="utf-8")
-        notes.append((md.name, content))
+        meta, _ = parse_frontmatter(content)
+        date_val = meta.get("date", "")
+        if not date_val:
+            continue
+        try:
+            note_date = datetime.strptime(str(date_val)[:10], "%Y-%m-%d")
+        except (ValueError, TypeError):
+            continue
+        if week_start <= note_date <= week_end:
+            notes.append((md.name, content))
     return notes
 
 
@@ -137,10 +142,11 @@ def _build_report_md(data: dict, project: str, week_folder: str, date_str: str) 
 
 def generate_weekly_reports(target_date: datetime | None = None) -> list[dict]:
     """Generate weekly reports for all projects that have notes this week.
-    Returns list of {project, path, notes_count} for each report written."""
+    Returns list of {project, path, notes_count} for each report written.
+    Reports are written to Projects/<P>/_Weekly Reports/<week_folder>.md.
+    """
     week_start, week_end, week_folder = _get_week_range(target_date)
     date_str = week_start.strftime("%Y-%m-%d")
-    year = str(week_start.year)
     results = []
 
     projects_dir = config.VAULT_PATH / "Projects"
@@ -152,7 +158,7 @@ def generate_weekly_reports(target_date: datetime | None = None) -> list[dict]:
             continue
 
         project = proj_dir.name
-        notes = _collect_week_notes(proj_dir, week_folder)
+        notes = _collect_week_notes(proj_dir, week_start, week_end)
         if not notes:
             continue
 
@@ -162,7 +168,8 @@ def generate_weekly_reports(target_date: datetime | None = None) -> list[dict]:
 
         report_md = _build_report_md(data, project, week_folder, date_str)
 
-        report_dir = proj_dir / "Weekly Reports" / year
+        # Write to _Weekly Reports subfolder (underscore prefix keeps it visually distinct)
+        report_dir = proj_dir / "_Weekly Reports"
         report_dir.mkdir(parents=True, exist_ok=True)
         report_path = report_dir / f"{week_folder}.md"
         report_path.write_text(report_md, encoding="utf-8")

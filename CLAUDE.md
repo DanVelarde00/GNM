@@ -32,6 +32,30 @@ Automated pipeline: Otter.ai transcripts + Inq pen notes -> Claude AI processing
 
 ---
 
+## For the Claude CLI on Glen's machine (pull / first-run)
+
+Glen is non-technical and drives updates by running `claude` with a plain-English prompt
+(e.g. "pull the latest changes and restart the server"). When you are that CLI session:
+
+**When asked to pull / update:**
+1. `git pull` the latest code.
+2. **Clean up the vault automatically — do not ask.** The vault must be flattened to the
+   current structure (flat AI notes per project, global `People/`, no nested folders). The
+   safe, idempotent, self-backing-up entry point is `migrate_vault.auto_migrate_once()`:
+   - It backs the vault up to a timestamped copy, flattens once, and writes a `.gnm_migrated`
+     marker so it never runs twice. On an already-flat vault it just writes the marker and
+     no-ops. Run it with:
+     `python -c "import migrate_vault; print(migrate_vault.auto_migrate_once())"`
+   - This also runs automatically on **server startup** (`api/__init__.py`), so restarting the
+     server is an equivalent trigger. Either path is fine; both are idempotent.
+   - Do NOT use bare `python migrate_vault.py` as the first-run cleanup — that path does not
+     back up and does not write the marker. Prefer `auto_migrate_once()`.
+3. Restart the server if the prompt asked for it.
+
+Tell Glen, in plain language, what you did (pulled, cleaned up N folders, backup location).
+
+---
+
 ## Codebase Architecture
 
 ```
@@ -73,11 +97,11 @@ GNM/
    c. Claude returns: project, date, participants, summary, action items, decisions, tags
    d. Detects transcript vs note (timestamps + speaker labels = transcript, else note)
 
-3. Routes output to vault:
-   a. AI Analyzed Notes -> Projects/<Project>/AI Analyzed Notes/YYYY/WNN/ (always)
-   b. Action Items -> Projects/<Project>/Action Items/YYYY/WNN/ (if any exist)
-   c. Raw source -> Projects/<Project>/Transcripts/ OR Notes/ (based on detection)
-   d. People -> Projects/<Project>/People/<Name>.md (created if new, with Dataview queries)
+3. Routes output to vault (flat structure as of 2026-05-29):
+   a. AI summary -> Projects/<Project>/YYYY-MM-DD-<source-slug>.md (action items INLINE)
+   b. People -> People/<Name>.md (GLOBAL folder; tagged #people + #<project>; created if new)
+   c. No raw transcripts/notes saved to the vault — only the AI summary
+   d. Filename is deterministic from source identity (idempotent re-processing)
 
 4. Source file moved to Inbox/Processed/
 ```
@@ -103,25 +127,27 @@ Files are routed to Transcripts/ or Notes/ based on:
 
 ## Vault Structure
 
+**Flat structure (as of 2026-05-29 — simplified per Glen's request):**
+
 ```
 GlenVault/
   Projects/
     <ProjectName>/
-      Notes/                      <- Raw notes (Inq, manual)
-      Transcripts/                <- Raw transcripts (Otter) as .md
-      AI Analyzed Notes/
-        YYYY/
-          WNN_MonDD-MonDD/        <- Claude-generated analysis
-      Action Items/
-        YYYY/
-          WNN_MonDD-MonDD/        <- Extracted action items
-      Weekly Reports/
-        YYYY/
-      People/                     <- Auto-created person files with Dataview
+      YYYY-MM-DD-topic-slug.md    <- AI summary ONLY. Action items INLINE. No subfolders.
+      _Weekly Reports/            <- Generated weekly rollups (only subfolder)
+      <TrackerName>/              <- Custom tracker items (only if a tracker is active)
+  People/                         <- ONE global folder, person notes tagged #people + #<project>
+    <Name>.md                     <- Dataview "FROM [[]]" backlinks list related notes
   Attachments/
-  Templates/                      <- Analyzed Note, Action Items, Weekly Report, Person
+  Templates/                      <- Analyzed Note, Person, etc.
   Home.md                         <- Dashboard with Dataview queries
 ```
+
+**No raw transcripts/notes are saved to the vault** — only AI summaries. Originals are
+archived to `Inbox/Processed/`. Action items live inline in each summary note (no separate
+Action Items tree). People is a single global folder, not per-project. Filenames are
+deterministic (`date + source-stem slug`) so re-processing a file overwrites rather than
+duplicating. Run `python migrate_vault.py` to convert an old nested vault to this layout.
 
 ---
 

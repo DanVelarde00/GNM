@@ -99,20 +99,25 @@ def list_projects() -> list[ProjectInfo]:
     projects_dir = _vault_path() / "Projects"
     if not projects_dir.is_dir():
         return []
+
+    # Count global people (total — not per-project)
+    people_dir = config.PEOPLE_PATH
+    total_people = len(list(people_dir.glob("*.md"))) if people_dir.is_dir() else 0
+
     result = []
     for d in sorted(projects_dir.iterdir()):
         if not d.is_dir() or d.name.startswith("."):
             continue
-        people_dir = d / "People"
-        people_count = len(list(people_dir.glob("*.md"))) if people_dir.is_dir() else 0
+        # has_analyzed: any *.md directly at the project top level (flat notes)
+        has_analyzed = any(d.glob("*.md"))
         result.append(ProjectInfo(
             name=d.name,
             path=_relative(d),
-            has_notes=any((d / "Notes").glob("*.md")) if (d / "Notes").is_dir() else False,
-            has_transcripts=any((d / "Transcripts").glob("*.md")) if (d / "Transcripts").is_dir() else False,
-            has_analyzed=(d / "AI Analyzed Notes").is_dir() and any((d / "AI Analyzed Notes").rglob("*.md")),
-            has_action_items=(d / "Action Items").is_dir() and any((d / "Action Items").rglob("*.md")),
-            people_count=people_count,
+            has_notes=has_analyzed,          # repurposed: true if any notes exist
+            has_transcripts=False,           # no longer a separate folder
+            has_analyzed=has_analyzed,
+            has_action_items=has_analyzed,   # action items are inline
+            people_count=total_people,
         ))
     return result
 
@@ -127,23 +132,25 @@ def scan_action_items(
     person: str | None = None,
     completed: bool | None = None,
 ) -> list[dict]:
+    """Scan action items from flat project notes (Projects/<P>/*.md only — top-level)."""
     projects_dir = _vault_path() / "Projects"
     items = []
 
-    dirs = []
+    # Collect project directories to scan
     if project:
-        p = projects_dir / project / "Action Items"
-        if p.is_dir():
-            dirs.append((project, p))
+        proj_dirs = [(project, projects_dir / project)]
     else:
-        for d in projects_dir.iterdir():
-            if d.is_dir() and not d.name.startswith("."):
-                ai = d / "Action Items"
-                if ai.is_dir():
-                    dirs.append((d.name, ai))
+        proj_dirs = [
+            (d.name, d)
+            for d in projects_dir.iterdir()
+            if d.is_dir() and not d.name.startswith(".")
+        ]
 
-    for proj_name, ai_dir in dirs:
-        for md in ai_dir.rglob("*.md"):
+    for proj_name, proj_dir in proj_dirs:
+        if not proj_dir.is_dir():
+            continue
+        # Only scan top-level *.md files — not tracker subfolders or weekly reports
+        for md in proj_dir.glob("*.md"):
             content = md.read_text(encoding="utf-8")
             meta, body = parse_frontmatter(content)
             for idx, m in enumerate(_TASK_RE.finditer(body)):
@@ -176,20 +183,21 @@ def scan_action_items(
                     "file_path": _relative(md),
                     "task_index": idx,
                     "date": meta.get("date", ""),
-                    "source_note": meta.get("source_note", ""),
+                    "source_note": meta.get("source_file", ""),
                 })
 
     return items
 
 
 def delete_note(vault_relative_path: str) -> dict:
-    """Delete an analyzed note and all derived files listed in its .meta.json sidecar."""
+    """Delete an analyzed note. Checks for a .meta.json sidecar for legacy compatibility."""
     fp = _vault_path() / vault_relative_path
     meta_path = fp.with_suffix(".meta.json")
     deleted = []
 
     if meta_path.exists():
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        # Handle both old format (analyzed/action_items/raw keys) and new (analyzed only)
         for key in ("analyzed", "action_items", "raw"):
             rel = meta.get(key)
             if rel:

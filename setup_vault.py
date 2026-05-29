@@ -13,23 +13,6 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 
-def get_current_week_info():
-    """Return (year, week_number, week_start, week_end) for the current week."""
-    today = datetime.now()
-    # ISO week: Monday = start
-    week_start = today - timedelta(days=today.weekday())
-    week_end = week_start + timedelta(days=6)
-    iso_year, iso_week, _ = today.isocalendar()
-    return iso_year, iso_week, week_start, week_end
-
-
-def format_week_folder(year, week_num, week_start, week_end):
-    """Format: W16_Apr14-Apr20"""
-    start_str = week_start.strftime("%b%d")
-    end_str = week_end.strftime("%b%d")
-    return f"W{week_num:02d}_{start_str}-{end_str}"
-
-
 def prompt_path(label, default):
     """Ask user for a path, with a default."""
     user_input = input(f"{label} [{default}]: ").strip()
@@ -91,24 +74,32 @@ tags: [dashboard]
 Welcome to the GNM vault. This vault is managed by the GNM processing pipeline.
 
 ## Quick Navigation
+- [[People/]] — All contacts
 - [[Projects/]] — All project folders
-- [[Templates/]] — Note templates
 
 ## Recent Notes
 ```dataview
 TABLE date, project, type
-FROM ""
-WHERE date
+FROM "Projects"
+WHERE date AND type != "weekly-report"
 SORT date DESC
-LIMIT 10
+LIMIT 15
 ```
 
 ## Open Action Items
 ```dataview
 TASK
-FROM ""
+FROM "Projects"
 WHERE !completed
 SORT file.name ASC
+```
+
+## Recent People
+```dataview
+TABLE file.mtime as "Last Updated"
+FROM "People"
+SORT file.mtime DESC
+LIMIT 10
 ```
 """
 
@@ -116,6 +107,7 @@ ANALYZED_NOTE_TEMPLATE = """---
 date: {{date}}
 type: {{type}}
 source: {{source}}
+source_file: {{source_file}}
 participants: []
 project: {{project}}
 tags: []
@@ -132,21 +124,6 @@ tags: []
 
 ## Decisions
 -
-
-## Source
-Link to raw transcript: [[]]
-"""
-
-ACTION_ITEMS_TEMPLATE = """---
-date: {{date}}
-project: {{project}}
-week: {{week}}
-tags: [action-items]
----
-
-## Action Items — {{project}} — {{week}}
-
-- [ ]
 """
 
 WEEKLY_REPORT_TEMPLATE = """---
@@ -176,27 +153,24 @@ PERSON_TEMPLATE = """---
 name: {{name}}
 role:
 organization:
-tags: [person]
+tags:
+  - "#people"
 ---
 
 # {{name}}
 
-## Role
-
-
 ## Related Notes
 ```dataview
 LIST
-FROM ""
-WHERE contains(participants, "{{name}}")
+FROM [[]]
 SORT date DESC
 ```
 
-## Action Items
+## Open Action Items
 ```dataview
 TASK
-FROM ""
-WHERE contains(text, "{{name}}") AND !completed
+FROM [[]]
+WHERE !completed
 ```
 """
 
@@ -222,7 +196,7 @@ def main():
 
     # Starter projects
     print()
-    default_projects = "Calico, Cobia, Personal, Vistra, Zelestra"
+    default_projects = "Calico, Cobia, Goldstone, Personal, Vistra, Zelestra"
     projects_input = input(f"Initial projects (comma-separated) [{default_projects}]: ").strip()
     projects = [p.strip() for p in (projects_input or default_projects).split(",") if p.strip()]
 
@@ -235,11 +209,6 @@ def main():
     if confirm and confirm != "y":
         print("Aborted.")
         return
-
-    # ── Get current week for sample folders ─────────────────────
-
-    year, week_num, week_start, week_end = get_current_week_info()
-    week_folder = format_week_folder(year, week_num, week_start, week_end)
 
     # ── Create inbox structure ──────────────────────────────────
 
@@ -258,16 +227,12 @@ def main():
     # Root-level folders
     create_dir(vault_path / "Attachments")
     create_dir(vault_path / "Templates")
+    create_dir(vault_path / "People")   # Global people folder
 
-    # Per-project folders
+    # Per-project folders — flat, no subfolders
     for project in projects:
         base = vault_path / "Projects" / project
-        create_dir(base / "Notes")
-        create_dir(base / "Transcripts")
-        create_dir(base / "AI Analyzed Notes" / str(year) / week_folder)
-        create_dir(base / "Action Items" / str(year) / week_folder)
-        create_dir(base / "Weekly Reports" / str(year))
-        create_dir(base / "People")
+        create_dir(base)
         print(f"  {base}")
 
     # ── Write starter files ─────────────────────────────────────
@@ -294,10 +259,9 @@ def main():
 
     # Templates
     write_file(vault_path / "Templates" / "Analyzed Note.md", ANALYZED_NOTE_TEMPLATE)
-    write_file(vault_path / "Templates" / "Action Items.md", ACTION_ITEMS_TEMPLATE)
     write_file(vault_path / "Templates" / "Weekly Report.md", WEEKLY_REPORT_TEMPLATE)
     write_file(vault_path / "Templates" / "Person.md", PERSON_TEMPLATE)
-    print(f"  Templates (4 files)")
+    print(f"  Templates (3 files)")
 
     # ── Shell alias for start-my-day ────────────────────────────
 

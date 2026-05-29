@@ -24,7 +24,7 @@ You process meeting transcripts and notes into structured Obsidian-compatible ma
 Known projects: {projects}
 
 Tag taxonomy:
-- Project tags (use short form): #calico, #cobia, #personal, #vistra, #zelestra
+- Project tags (use short form): #calico, #cobia, #personal, #vistra, #zelestra, #goldstone
 - Type tags: #meeting, #note, #call, #brainstorm
 - Topic tags: #solar-tax-equity, #sce, #due-diligence, #finance, #legal, #operations, #strategy
 
@@ -38,7 +38,7 @@ Your job:
    If multiple projects are discussed, pick the primary one.
 3. Extract the date. If not explicit in the text, use today: {today}.
 4. Identify ALL participants/people mentioned by name.
-5. Determine a short topic (2-5 words, lowercase, hyphenated) for the filename.
+5. Determine a short topic (2-5 words, lowercase, hyphenated) for the H1 heading.
 6. Assign relevant tags from the taxonomy above. Add new topic tags if needed.
 
 You MUST respond with valid JSON only. No markdown, no explanation, no code fences.
@@ -62,7 +62,19 @@ The JSON schema:
 """.format(projects=", ".join(config.PROJECTS), today=datetime.now().strftime("%Y-%m-%d"))
 
 
+# ── Slug helper ─────────────────────────────────────────────────────────────
+
+def _project_slug(project_name: str) -> str:
+    """Convert project name to a tag-safe slug: 'Data Center' → 'data-center'."""
+    return re.sub(r"[^\w]+", "-", project_name.lower()).strip("-")
+
+
 # ── File reading helpers ────────────────────────────────────────────────────
+
+class ScannedPDFError(ValueError):
+    """Raised when a PDF has no extractable text (likely a scanned image)."""
+    pass
+
 
 def read_transcript(file_path: Path) -> str:
     suffix = file_path.suffix.lower()
@@ -71,6 +83,19 @@ def read_transcript(file_path: Path) -> str:
     elif suffix == ".docx":
         doc = Document(str(file_path))
         return "\n".join(p.text for p in doc.paragraphs)
+    elif suffix == ".pdf":
+        import pypdf
+        reader = pypdf.PdfReader(str(file_path))
+        pages_text = []
+        for page in reader.pages:
+            t = page.extract_text() or ""
+            pages_text.append(t)
+        full_text = "\n".join(pages_text)
+        if not full_text.strip():
+            raise ScannedPDFError(
+                f"PDF has no extractable text layer (likely a scanned image): {file_path.name}"
+            )
+        return full_text
     else:
         raise ValueError(f"Unsupported file type: {suffix}")
 
@@ -109,7 +134,13 @@ def build_analyzed_note(data: dict, source_filename: str, project: str) -> str:
     note_type = data.get("type", "note")
     source = data.get("source", "unknown")
     participants = data.get("participants", [])
-    tags = data.get("tags", [])
+    tags = list(data.get("tags", []))
+
+    # Guarantee the project tag is always present
+    proj_tag = f"#{_project_slug(project)}"
+    if proj_tag not in tags:
+        tags.insert(0, proj_tag)
+
     topic = data.get("topic", "untitled")
 
     # YAML frontmatter
@@ -122,6 +153,7 @@ def build_analyzed_note(data: dict, source_filename: str, project: str) -> str:
         f"type: {note_type}",
         f"source: {source}",
         f"project: {project}",
+        f"source_file: {source_filename}",
         "participants:",
         participant_yaml,
         "tags:",
@@ -133,7 +165,7 @@ def build_analyzed_note(data: dict, source_filename: str, project: str) -> str:
         f"**Project:** {project}  ",
         f"**Date:** {date}  ",
         f"**Participants:** {', '.join(f'[[{p}]]' for p in participants)}  ",
-        f"**Source:** {source}",
+        f"**Source:** {source_filename}",
         "",
         "## Summary",
         data.get("summary", ""),
@@ -160,74 +192,59 @@ def build_analyzed_note(data: dict, source_filename: str, project: str) -> str:
         lines.append(f"- {decision}")
 
     lines.append("")
-    lines.append("## Source")
-    source_stem = Path(source_filename).stem
-    lines.append(f"[[{source_stem}]]")
-    lines.append("")
 
-    return "\n".join(lines)
-
-
-# ── Build action items file ─────────────────────────────────────────────────
-
-def build_action_items_note(data: dict, analyzed_note_filename: str, project: str) -> str | None:
-    items = data.get("action_items", [])
-    if not items:
-        return None
-
-    date = data.get("date", datetime.now().strftime("%Y-%m-%d"))
-    topic = data.get("topic", "untitled")
-
-    lines = [
-        "---",
-        f"date: {date}",
-        f"project: {project}",
-        f"source_note: \"[[{analyzed_note_filename}]]\"",
-        "tags:",
-        "  - action-items",
-        "---",
-        "",
-        f"# Action Items — {topic.replace('-', ' ').title()}",
-        "",
-        f"From: [[{analyzed_note_filename.replace('.md', '')}]]",
-        "",
-    ]
-
-    for item in items:
-        task = item.get("task", "")
-        owner = item.get("owner")
-        due = item.get("due")
-        owner_str = f" — [[{owner}]]" if owner else ""
-        due_str = f" (due: {due})" if due else ""
-        lines.append(f"- [ ] {task}{owner_str}{due_str}")
-
-    lines.append("")
     return "\n".join(lines)
 
 
 # ── People management ──────────────────────────────────────────────────────
 
 def update_people(data: dict, project: str):
-    """Create or update People/ .md files for each participant."""
+    """Create or update global People/ .md files for each participant.
+    Tags each person with #people and the project-specific tag.
+    Merges project tags if the person file already exists.
+    """
     participants = data.get("participants", [])
     if not participants:
         return
 
-    people_dir = config.VAULT_PATH / "Projects" / project / "People"
+    people_dir = config.PEOPLE_PATH
     people_dir.mkdir(parents=True, exist_ok=True)
+
+    proj_tag = f"#{_project_slug(project)}"
 
     for person in participants:
         person_file = people_dir / f"{person}.md"
+
         if person_file.exists():
-            # Person file already exists — Obsidian backlinks handle the rest
+            # Read existing file and add project tag if not already present
+            raw = person_file.read_text(encoding="utf-8")
+            fm_match = re.match(r"^(---\s*\n)(.*?)(\n---\s*\n?)(.*)", raw, re.DOTALL)
+            if fm_match:
+                open_fence, fm_text, close_fence, body = fm_match.groups()
+                # Check if project tag already present
+                existing_tags = re.findall(r"-\s*(#\S+)", fm_text)
+                if proj_tag not in existing_tags and "tags:" in fm_text:
+                    fm_text = re.sub(
+                        r"(tags:(?:\s*\n(?:\s+-[^\n]*))*)",
+                        lambda mm: mm.group(0).rstrip() + f"\n  - {proj_tag}",
+                        fm_text,
+                        count=1,
+                    )
+                    person_file.write_text(
+                        open_fence + fm_text + close_fence + body,
+                        encoding="utf-8",
+                    )
+                    print(f"    Updated person tags: {person_file.name}")
             continue
 
+        # Create new person file
         content = f"""---
 name: "{person}"
 role:
 organization:
 tags:
-  - person
+  - "#people"
+  - "{proj_tag}"
 ---
 
 # {person}
@@ -235,51 +252,19 @@ tags:
 ## Related Notes
 ```dataview
 LIST
-FROM "Projects/{project}"
-WHERE contains(participants, "{person}")
+FROM [[]]
 SORT date DESC
 ```
 
-## Action Items
+## Open Action Items
 ```dataview
 TASK
-FROM "Projects/{project}"
-WHERE contains(text, "{person}") AND !completed
+FROM [[]]
+WHERE !completed
 ```
 """
         person_file.write_text(content, encoding="utf-8")
         print(f"    Created person: {person_file}")
-
-
-# ── Transcript vs note detection ────────────────────────────────────────────
-
-def _is_transcript(source_path: Path, data: dict) -> bool:
-    """Determine if the source is a transcript (vs a note) based on content signals."""
-    # Source type is a strong signal
-    source = data.get("source", "")
-    if source == "otter":
-        return True
-    if source == "inq":
-        return False
-
-    # Check for timestamp patterns (e.g., "0:03", "12:45", "1:23:45")
-    text = source_path.read_text(encoding="utf-8")
-    timestamp_pattern = re.compile(r"\b\d{1,2}:\d{2}(?::\d{2})?\b")
-    timestamp_hits = len(timestamp_pattern.findall(text[:2000]))
-
-    # Check for speaker labels (e.g., "Name  0:03" or "Speaker 1:")
-    speaker_pattern = re.compile(r"^[A-Z][\w\s]+(?:\s+\d+:\d{2}|\s*:)", re.MULTILINE)
-    speaker_hits = len(speaker_pattern.findall(text[:2000]))
-
-    # If timestamps and speaker labels are frequent, it's a transcript
-    if timestamp_hits >= 3 and speaker_hits >= 2:
-        return True
-
-    # Claude's type detection as fallback
-    if data.get("type") in ("meeting", "call"):
-        return True
-
-    return False
 
 
 # ── Route output to vault ──────────────────────────────────────────────────
@@ -287,84 +272,48 @@ def _is_transcript(source_path: Path, data: dict) -> bool:
 def route_to_vault(data: dict, source_path: Path) -> dict:
     project = data.get("project", "General")
 
-    # Validate project — create structure if new
+    # Validate project — create flat structure if new
     project_dir = config.VAULT_PATH / "Projects" / project
-    if not project_dir.exists():
-        print(f"  New project detected: {project}")
-        for sub in ["Notes", "Transcripts", "AI Analyzed Notes",
-                     "Action Items", "Weekly Reports", "People"]:
-            (project_dir / sub).mkdir(parents=True, exist_ok=True)
+    project_dir.mkdir(parents=True, exist_ok=True)
 
-    # Date and week
+    # Date
     date = parse_date(data.get("date"))
-    year = str(date.year)
-    week_folder = get_week_folder(date)
     date_str = date.strftime("%Y-%m-%d")
 
-    # Filename
-    topic = data.get("topic", "untitled")
-    topic_slug = re.sub(r"[^\w\-]", "-", topic.lower()).strip("-")
-    filename = f"{date_str}-{topic_slug}.md"
+    # ── Deterministic filename from source identity (Fix 5) ──
+    # Strip any leading YYYY-MM-DD- from the source stem first, so Otter files
+    # (named like "2026-05-29-title.txt") don't get a doubled date prefix.
+    stem = re.sub(r"^\d{4}-\d{2}-\d{2}[-_]", "", source_path.stem)
+    source_slug = re.sub(r"[^\w\-]", "-", stem.lower()).strip("-") or "untitled"
+    filename = f"{date_str}-{source_slug}.md"
 
-    # ── Write analyzed note ──
-    analyzed_dir = project_dir / "AI Analyzed Notes" / year / week_folder
-    analyzed_dir.mkdir(parents=True, exist_ok=True)
-    analyzed_path = analyzed_dir / filename
+    # Handle genuine collision: same date+slug but DIFFERENT source file
+    target_path = project_dir / filename
+    if target_path.exists():
+        # Check if it's the same source (idempotent re-run) or a different one
+        existing_raw = target_path.read_text(encoding="utf-8")
+        existing_source_match = re.search(r"^source_file:\s*(.+)$", existing_raw, re.MULTILINE)
+        existing_source = existing_source_match.group(1).strip() if existing_source_match else None
+        if existing_source and existing_source != source_path.name:
+            # Different source → numeric suffix
+            counter = 2
+            while True:
+                candidate = project_dir / f"{date_str}-{source_slug}-{counter}.md"
+                if not candidate.exists():
+                    filename = candidate.name
+                    target_path = candidate
+                    break
+                counter += 1
+        # else: same source → overwrite (idempotent)
 
+    analyzed_path = target_path
+
+    # ── Write analyzed note (flat — no subfolders) ──
     analyzed_md = build_analyzed_note(data, source_path.name, project)
     analyzed_path.write_text(analyzed_md, encoding="utf-8")
     print(f"  Analyzed note: {analyzed_path}")
 
-    # ── Write action items ──
-    actions_filename = filename.replace(".md", "-actions.md")
-    action_items_md = build_action_items_note(data, filename, project)
-    ai_path = None
-    if action_items_md:
-        ai_dir = project_dir / "Action Items" / year / week_folder
-        ai_dir.mkdir(parents=True, exist_ok=True)
-        ai_path = ai_dir / actions_filename
-        ai_path.write_text(action_items_md, encoding="utf-8")
-        print(f"  Action items: {ai_path}")
-
-    # ── Save raw source as .md (route by content type) ──
-    is_transcript = _is_transcript(source_path, data)
-    if is_transcript:
-        raw_dir = project_dir / "Transcripts"
-        raw_type = "transcript"
-    else:
-        raw_dir = project_dir / "Notes"
-        raw_type = "note"
-
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    raw_filename = source_path.stem + ".md"
-    raw_path = raw_dir / raw_filename
-    raw_text = source_path.read_text(encoding="utf-8")
-    raw_md = f"""---
-date: {date_str}
-type: {raw_type}
-source: {data.get('source', 'unknown')}
-project: {project}
-tags:
-  - {raw_type}
----
-
-# {raw_type.title()} — {source_path.stem}
-
-{raw_text}
-"""
-    raw_path.write_text(raw_md, encoding="utf-8")
-    print(f"  {raw_type.title()}: {raw_path}")
-
-    # ── Write sidecar meta (used by delete endpoint) ──
-    meta = {
-        "analyzed": str(analyzed_path.relative_to(config.VAULT_PATH)).replace("\\", "/"),
-        "action_items": str(ai_path.relative_to(config.VAULT_PATH)).replace("\\", "/") if ai_path else None,
-        "raw": str(raw_path.relative_to(config.VAULT_PATH)).replace("\\", "/"),
-    }
-    meta_path = analyzed_dir / filename.replace(".md", ".meta.json")
-    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
-
-    # ── Write custom tracker items ──
+    # ── Write custom tracker items (flat within tracker subfolder) ──
     try:
         from api.services.tracker_service import load_trackers
         for tracker in load_trackers():
@@ -384,7 +333,7 @@ tags:
 date: {date_str}
 project: {project}
 tracker: "{tracker.name}"
-source_note: "[[{filename}]]"
+source_note: "[[{filename.replace('.md', '')}]]"
 tags:
   - {tracker.folder_name.lower().replace(' ', '-')}
 ---
@@ -400,7 +349,7 @@ From: [[{filename.replace('.md', '')}]]
     except ImportError:
         pass  # API not installed, running standalone
 
-    # ── Create/update people files ──
+    # ── Create/update people files (global People/ folder) ──
     update_people(data, project)
 
     return {"analyzed_path": analyzed_path, "project": project, "data": data}
@@ -429,7 +378,12 @@ def process_file(file_path: Path, source_type: str = "otter") -> dict | None:
     print(f"{'='*60}")
 
     # Read transcript
-    transcript = read_transcript(file_path)
+    try:
+        transcript = read_transcript(file_path)
+    except ScannedPDFError as e:
+        print(f"  SKIP: {file_path.name} appears to be a scanned PDF (needs OCR): {e}")
+        return None
+
     if not transcript.strip():
         print("  SKIP: Empty file")
         return None
@@ -458,7 +412,7 @@ def process_file(file_path: Path, source_type: str = "otter") -> dict | None:
     data = parse_response(response_text)
     data["source"] = source_type
 
-    # Route to vault
+    # Route to vault (before mark_processed so a crash doesn't lose the source)
     result = route_to_vault(data, file_path)
 
     # Move source to Processed

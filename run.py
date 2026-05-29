@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-GNM Runner — Transcript processing agent.
+GNM Runner - Transcript processing agent.
 
 Modes:
     python run.py              Scan inboxes once, process all found files
@@ -17,9 +17,22 @@ from processor import process_file
 
 
 def scan_folder(folder: Path, source_type: str) -> list[tuple[Path, str]]:
-    """Find all processable files in a folder."""
+    """Find all processable files in a folder.
+
+    Audio files are detected and logged with a clear warning but never returned
+    as processable - they must be exported from Otter as TEXT first.
+    """
     if not folder.exists():
         return []
+
+    # Warn about any audio/video files that are NOT processable
+    for ext in config.AUDIO_EXTENSIONS:
+        for audio_file in folder.glob(f"*{ext}"):
+            print(
+                f"  SKIP (audio, not a transcript): {audio_file.name}"
+                f" - export the TEXT transcript from Otter instead"
+            )
+
     files = []
     for ext in config.SUPPORTED_EXTENSIONS:
         files.extend(folder.glob(f"*{ext}"))
@@ -59,22 +72,48 @@ def print_status():
 
 
 def process_pending(pending: list[tuple[Path, str]]) -> tuple[int, int]:
-    """Process a list of files. Returns (processed, errors)."""
+    """Process a list of files. Returns (processed, errors).
+
+    Instruments per-file timing and prints a cycle total.
+    Audio files are double-checked here and skipped if they somehow arrive.
+    """
     processed = 0
     errors = 0
+    cycle_start = time.perf_counter()
+
     for file_path, source_type in pending:
+        # Defensive audio guard - blocks .mp3 etc. even if passed directly
+        if file_path.suffix.lower() in config.AUDIO_EXTENSIONS:
+            print(
+                f"  SKIP (audio guard): {file_path.name}"
+                f" - audio files must never enter the pipeline"
+            )
+            continue
+
+        t0 = time.perf_counter()
+        ts = time.strftime("%H:%M:%S")
         try:
             result = process_file(file_path, source_type)
+            elapsed = time.perf_counter() - t0
             if result:
                 processed += 1
+                print(f"  [{ts}] Processed {file_path.name} in {elapsed:.1f}s")
+            else:
+                print(f"  [{ts}] Skipped {file_path.name} (no result) in {elapsed:.1f}s")
         except Exception as e:
-            print(f"  ERROR processing {file_path.name}: {e}")
+            elapsed = time.perf_counter() - t0
+            print(f"  [{ts}] ERROR processing {file_path.name} in {elapsed:.1f}s: {e}")
             errors += 1
+
+    cycle_elapsed = time.perf_counter() - cycle_start
+    if pending:
+        print(f"  Cycle: {processed} processed, {errors} errors in {cycle_elapsed:.1f}s")
+
     return processed, errors
 
 
 def run_once():
-    """Scan all inboxes and process everything found."""
+    """Scan all inboxes and process everything found (uncapped - explicit run)."""
     print_status()
 
     pending = []
@@ -101,9 +140,15 @@ def run_once():
 
 
 def run_watch():
-    """Poll Otter + inboxes every 60 seconds. Ctrl+C to stop."""
+    """Poll Otter + inboxes every 60 seconds. Ctrl+C to stop.
+
+    Caps files processed per cycle to config.OTTER_MAX_PER_CYCLE so a large
+    backlog never stalls the pipeline for 45+ minutes in one shot. Leftovers
+    are picked up on the next poll iteration.
+    """
     print_status()
     print("  Mode: WATCH (polling every 60s)")
+    print(f"  Throttle:     max {config.OTTER_MAX_PER_CYCLE} files per cycle (OTTER_MAX_PER_CYCLE)")
     print("  Press Ctrl+C to stop")
     print("=" * 60)
 
@@ -121,7 +166,20 @@ def run_watch():
 
             if pending:
                 ts = time.strftime("%H:%M:%S")
-                print(f"\n[{ts}] Found {len(pending)} new file(s)")
+                total_found = len(pending)
+
+                # Cap per cycle to prevent long stalls
+                if total_found > config.OTTER_MAX_PER_CYCLE:
+                    print(
+                        f"\n[{ts}] Found {total_found} file(s);"
+                        f" processing first {config.OTTER_MAX_PER_CYCLE} this cycle"
+                        f" (throttle={config.OTTER_MAX_PER_CYCLE},"
+                        f" {total_found - config.OTTER_MAX_PER_CYCLE} deferred to next cycle)"
+                    )
+                    pending = pending[:config.OTTER_MAX_PER_CYCLE]
+                else:
+                    print(f"\n[{ts}] Found {total_found} new file(s)")
+
                 for f, src in pending:
                     print(f"  [{src}] {f.name}")
 
@@ -141,6 +199,14 @@ def run_single(file_path_str: str):
     if not path.exists():
         print(f"File not found: {path}")
         sys.exit(1)
+
+    # Audio guard - block explicitly even when called directly via CLI
+    if path.suffix.lower() in config.AUDIO_EXTENSIONS:
+        print(
+            f"  SKIP (audio, not a transcript): {path.name}"
+            f" - export the TEXT transcript from Otter instead"
+        )
+        sys.exit(0)
 
     parent = path.parent.name.lower()
     if "otter" in parent:
