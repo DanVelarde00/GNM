@@ -25,8 +25,8 @@ Automated pipeline: Otter.ai transcripts + Inq pen notes -> Claude AI processing
 - `dashboard/` — Next.js 16 + React frontend with Tailwind CSS, Zustand, TanStack Query
 - `api/` — FastAPI routes + services (vault, search, chat, trackers, processor management)
 
-**Vault location:** `C:\Users\danve\obsidian\GlenVault\` (prototype on Dan's machine)
-**Glen's vault:** TBD — will be on his Mac via Dropbox
+**Vault location (Glen's Mac):** `/Users/glencasanova/Dropbox/Claude/GlenVault`
+**Inbox location (Glen's Mac):** `/Users/glencasanova/Dropbox/NoteInbox`
 
 **Active projects in vault:** Calico, Cobia, Goldstone (auto-created), Personal, Vistra, Zelestra
 
@@ -192,7 +192,7 @@ Trackers let Glen define new extraction categories beyond action items. When cre
 ## Key Design Decisions
 
 - **Otter auto-pull via unofficial API** — Glen's own account, low volume, ToS gray area but not a clear violation. Credentials in .env only. Session tokens in-memory. Can fall back to manual export if needed.
-- **Google Drive sync folder** also watched at `C:\Users\danve\drive\` as secondary input
+- **Google Drive sync folder** also watched at `~/Google Drive/My Drive/Otter` as secondary input
 - **New projects auto-created** — if Claude detects a project name not in the known list, it creates the full folder structure automatically (e.g., Goldstone was auto-created)
 - **Processed files moved** to `Inbox/Processed/` to prevent re-processing
 - **Otter poller uses state file** (`.otter_state.json`) to track pulled speech IDs
@@ -206,9 +206,9 @@ All in `.env` (never committed):
 ANTHROPIC_API_KEY=...
 OTTER_EMAIL=...
 OTTER_PASSWORD=...
-GNM_VAULT_PATH=C:\Users\danve\obsidian\GlenVault
-GNM_INBOX_PATH=C:\Users\danve\Dropbox\NoteInbox
-GNM_OTTER_GDRIVE_PATH=C:\Users\danve\drive
+GNM_VAULT_PATH=/Users/glencasanova/Dropbox/Claude/GlenVault
+GNM_INBOX_PATH=/Users/glencasanova/Dropbox/NoteInbox
+GNM_OTTER_GDRIVE_PATH=~/Google Drive/My Drive/Otter
 ```
 
 ---
@@ -242,7 +242,7 @@ GNM_OTTER_GDRIVE_PATH=C:\Users\danve\drive
 
 **At the end of every session, update `token_usage.md`** with a new row: date, session description, model used, estimated input/output tokens, and estimated cost.
 
-File: `C:\Users\danve\Projects\GNM\token_usage.md`
+File: `token_usage.md` (in the GNM repo root)
 
 ---
 
@@ -252,5 +252,5 @@ File: `C:\Users\danve\Projects\GNM\token_usage.md`
 - `token_usage.md` — Running token usage and cost tracker
 - `process_summary.txt` — Detailed workflow spec (Layers 1-3 + automation options)
 - `process_map.pdf` — Visual process diagram
-- `C:\Users\danve\obsidian\DVSB\Projects\In Progress\Glen's Note Dashboard\System Overview.md` — Original project brief
-- `C:\Users\danve\obsidian\DVSB\Projects\In Progress\Glen's Note Dashboard\Stakeholder Communications.md` — Glen's direct messages
+- Dan's vault: `DVSB/Projects/In Progress/Glen's Note Dashboard/System Overview.md` — Original project brief
+- Dan's vault: `DVSB/Projects/In Progress/Glen's Note Dashboard/Stakeholder Communications.md` — Glen's direct messages

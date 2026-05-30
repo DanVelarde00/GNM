@@ -83,10 +83,28 @@ class ScannedPDFError(ValueError):
     pass
 
 
+class BatchJSONError(ValueError):
+    """Raised when a .txt file contains a raw API/MCP JSON batch dump instead of a transcript."""
+    pass
+
+
 def read_transcript(file_path: Path) -> str:
     suffix = file_path.suffix.lower()
     if suffix in (".txt", ".md"):
-        return file_path.read_text(encoding="utf-8")
+        content = file_path.read_text(encoding="utf-8")
+        # Reject files that are raw MCP/Otter API JSON dumps (contain multiple meetings).
+        # These arrive when a Claude session saves a search-tool response directly to disk
+        # instead of fetching each transcript individually via otter_service.py.
+        stripped = content.lstrip()
+        if stripped.startswith("{") and (
+            '"results"' in stripped[:500]
+            or '"result":{"content"' in stripped[:500]
+        ):
+            raise BatchJSONError(
+                f"{file_path.name} looks like an Otter API batch dump, not a single transcript. "
+                "Use the Otter MCP fetch tool to pull individual transcripts instead."
+            )
+        return content
     elif suffix == ".docx":
         doc = Document(str(file_path))
         return "\n".join(p.text for p in doc.paragraphs)
@@ -404,6 +422,9 @@ def process_file(file_path: Path, source_type: str = "otter") -> Optional[dict]:
         transcript = read_transcript(file_path)
     except ScannedPDFError as e:
         print(f"  SKIP: {file_path.name} appears to be a scanned PDF (needs OCR): {e}")
+        return None
+    except BatchJSONError as e:
+        print(f"  SKIP: {e}")
         return None
 
     if not transcript.strip():
