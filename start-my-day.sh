@@ -6,7 +6,7 @@ set -e
 cd "$(dirname "$0")"
 
 # Load .env if present (sets GNM_VAULT_PATH etc.)
-[ -f .env ] && export $(grep -v '^#' .env | xargs)
+[ -f .env ] && set -a && source .env && set +a
 
 echo "Starting GNM..."
 
