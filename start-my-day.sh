@@ -6,7 +6,11 @@ set -e
 cd "$(dirname "$0")"
 
 # Load .env if present (sets GNM_VAULT_PATH etc.)
-[ -f .env ] && set -a && source .env && set +a
+if [ -f .env ]; then
+    set -a
+    source <(grep -v '^\s*#' .env | grep -v '^\s*$' | sed 's/[[:space:]]*=[[:space:]]*/=/')
+    set +a
+fi
 
 echo "Starting GNM..."
 
