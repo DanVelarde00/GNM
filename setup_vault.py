@@ -214,7 +214,7 @@ def main():
 
     print()
     print("Creating inbox folders...")
-    for sub in ["Inq", "Otter", "Manual", "Processed"]:
+    for sub in ["Inq", "Otter", "Manual", "Processed", "ForDan"]:
         p = inbox_path / sub
         create_dir(p)
         print(f"  {p}")

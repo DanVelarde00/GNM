@@ -23,30 +23,34 @@ def _footer(timestamp: str) -> str:
     )
 
 
-def create_issue(title: str, body: str) -> dict:
+def create_issue(title: str, body: str, labels: list[str] | None = None) -> dict:
     """
     Open a GitHub issue.
+
+    labels defaults to ["from-chat", "bug"]; pass an explicit list to override
+    (must be labels that already exist in the repo, or the API path 422s).
 
     Returns:
         {"ok": True,  "url": "https://github.com/..."}
         {"ok": False, "url": None, "error": "..."}
     """
+    labels = labels if labels is not None else _LABELS
     timestamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     full_body = body + _footer(timestamp)
 
     if config.GITHUB_TOKEN:
-        return _create_via_api(title, full_body)
-    return _create_via_cli(title, full_body)
+        return _create_via_api(title, full_body, labels)
+    return _create_via_cli(title, full_body, labels)
 
 
-def _create_via_api(title: str, body: str) -> dict:
+def _create_via_api(title: str, body: str, labels: list[str]) -> dict:
     url = f"https://api.github.com/repos/{config.GITHUB_REPO}/issues"
     headers = {
         "Authorization": f"Bearer {config.GITHUB_TOKEN}",
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
-    payload = {"title": title, "body": body, "labels": _LABELS}
+    payload = {"title": title, "body": body, "labels": labels}
     try:
         resp = httpx.post(url, headers=headers, json=payload, timeout=15)
         if resp.status_code == 201:
@@ -61,7 +65,7 @@ def _create_via_api(title: str, body: str) -> dict:
         return {"ok": False, "url": None, "error": str(exc)}
 
 
-def _create_via_cli(title: str, body: str) -> dict:
+def _create_via_cli(title: str, body: str, labels: list[str]) -> dict:
     """Fallback: use the authenticated `gh` CLI."""
     try:
         result = subprocess.run(
@@ -76,7 +80,7 @@ def _create_via_cli(title: str, body: str) -> dict:
                 "--body",
                 body,
                 "--label",
-                ",".join(_LABELS),
+                ",".join(labels),
             ],
             capture_output=True,
             text=True,

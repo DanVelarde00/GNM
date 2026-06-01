@@ -46,6 +46,11 @@ def create_app() -> FastAPI:
                 print(f"[GNM] Vault cleaned up to flat layout. Rollback copy: {res.get('backup')}")
         except Exception as e:
             print(f"[GNM] Auto-migration skipped due to error: {e}")
+        # Ensure the drop-folder exists so Glen can drop files for Dan (auto-issues).
+        try:
+            config.INBOX_FORDAN.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            print(f"[GNM] Could not create ForDan inbox: {e}")
         ProcessManager.instance().start()
         search_service.build_full_index()
         if config.OTTER_MCP_URL and config.OTTER_MCP_TOKEN:

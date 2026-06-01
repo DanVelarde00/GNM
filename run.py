@@ -64,6 +64,78 @@ def scan_all_inboxes() -> list[tuple[Path, str]]:
     return pending
 
 
+def process_fordan_files() -> int:
+    """Drop-folder intake: any file in Inbox/ForDan becomes a GitHub issue for Dan.
+
+    Reads the file, opens an issue with its contents, then archives it to
+    Inbox/Processed so it isn't re-filed. Returns the count of issues opened.
+    """
+    folder = config.INBOX_FORDAN
+    if not folder.exists():
+        return 0
+
+    files = []
+    for ext in config.SUPPORTED_EXTENSIONS:
+        files.extend(folder.glob(f"*{ext}"))
+    if not files:
+        return 0
+
+    try:
+        from api.services import github_service
+    except ImportError:
+        print("  ForDan: github_service unavailable (API not installed) — skipping")
+        return 0
+
+    from processor import mark_processed, read_transcript, ScannedPDFError
+
+    fail_dir = folder / "_failed"
+    opened = 0
+    for f in sorted(files):
+        # Per-file try/except: a single bad file (read error, locked file,
+        # GitHub outage) must never propagate out and kill the watch loop, whose
+        # only handler is KeyboardInterrupt.
+        try:
+            try:
+                content = read_transcript(f)
+            except (ScannedPDFError, ValueError) as e:
+                print(f"  ForDan SKIP {f.name}: {e}")
+                continue
+
+            ts = time.strftime("%Y-%m-%d %H:%M")
+            body = (
+                f"Glen dropped a file into the ForDan inbox folder on {ts}.\n\n"
+                f"**File:** `{f.name}`\n\n"
+                "## Contents\n\n"
+                f"{content[:8000]}"
+                + ("\n\n_(truncated)_" if len(content) > 8000 else "")
+            )
+            result = github_service.create_issue(
+                title=f"From Glen: {f.name}",
+                body=body,
+                labels=["from-chat"],
+            )
+            if result.get("ok"):
+                print(f"  ForDan: filed issue for {f.name} -> {result.get('url')}")
+                mark_processed(f)
+                opened += 1
+            else:
+                # Move aside instead of leaving it in ForDan — otherwise every
+                # 60s cycle re-files it (spamming duplicate issues if the issue
+                # actually got created before a timeout). Dan can inspect _failed.
+                print(f"  ForDan ERROR filing {f.name}: {result.get('error')} — moving to _failed")
+                fail_dir.mkdir(exist_ok=True)
+                dest = fail_dir / f.name
+                counter = 2
+                while dest.exists():
+                    dest = fail_dir / f"{f.stem}-{counter}{f.suffix}"
+                    counter += 1
+                f.replace(dest)
+        except Exception as e:
+            print(f"  ForDan ERROR handling {f.name}: {e} — left in place")
+
+    return opened
+
+
 
 def print_status():
     """Print current configuration."""
@@ -132,6 +204,8 @@ def run_once():
     """Scan all inboxes and process everything found (uncapped - explicit run)."""
     print_status()
 
+    process_fordan_files()
+
     pending = []
     seen = set()
     for f, src in scan_all_inboxes():
@@ -177,6 +251,8 @@ def run_watch():
 
     try:
         while True:
+            process_fordan_files()
+
             seen = set()
             pending = []
             for f, src in scan_all_inboxes():

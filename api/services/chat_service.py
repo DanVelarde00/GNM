@@ -49,6 +49,20 @@ When Glen asks to pull, sync, or fetch new notes from Otter:
 When Glen asks to update the app, get the latest code, or pull from GitHub:
 - Call update_server. It will pull the latest code and restart everything. Warn Glen the dashboard will go offline for a few seconds while it restarts.
 
+When Glen asks which notes are missing participants (or another field), or to find/fix incomplete notes:
+- Call scan_notes_missing_fields (field defaults to participants). Summarise the list in plain language.
+
+When Glen asks to redo, re-run, fix, or re-enrich a specific note:
+- Call reprocess_note with the note's path. If it reports the original source is gone, explain that
+  only the AI summary remains so it can't be re-run from the transcript, and offer to move it instead.
+- If Glen asks to fix "all notes missing participants", first call scan_notes_missing_fields and tell
+  Glen how many notes need fixing. Each note is re-run through the AI (a few seconds and a small cost
+  per note), so if there are more than 5, summarise the list and ask Glen to confirm before proceeding.
+  Once confirmed, call reprocess_note once per note and report progress as you go.
+
+When Glen says a note is filed under the wrong project (but the summary itself is fine):
+- Call move_note with the path and the correct project. Confirm the new location in plain language.
+
 Known projects: {projects}
 
 ## Context Documents
@@ -97,6 +111,66 @@ TOOLS = [
             "The server will be unavailable for a few seconds while it restarts."
         ),
         "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "scan_notes_missing_fields",
+        "description": (
+            "Scans the vault for notes missing a frontmatter field (default 'participants'). "
+            "Call when Glen asks which notes are missing participants, dates, or other fields, "
+            "or before reprocessing to find what needs fixing. Returns the list of note paths."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "field": {
+                    "type": "string",
+                    "description": "Frontmatter field to check (e.g. 'participants', 'date', 'tags'). Defaults to 'participants'.",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "reprocess_note",
+        "description": (
+            "Re-runs the AI pipeline on a single note's original transcript and overwrites the note "
+            "with corrected summary, participants, tags, project, and date. "
+            "Call when Glen asks to redo, re-run, fix, or re-enrich a specific note (e.g. one missing "
+            "participants). Requires the note's vault-relative path. The original source must still be "
+            "in Inbox/Processed."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Vault-relative path of the note to reprocess, e.g. 'Projects/Vistra/2026-04-17-...md'.",
+                },
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "move_note",
+        "description": (
+            "Moves a misrouted note to the correct project folder and fixes its project label and tag. "
+            "Does NOT re-run the AI — use this when the summary is fine but the note is in the wrong "
+            "project folder. Call when Glen says a note is filed under the wrong project."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Vault-relative path of the note to move.",
+                },
+                "target_project": {
+                    "type": "string",
+                    "description": "The correct project name (e.g. 'Goldstone', 'Zelestra').",
+                },
+            },
+            "required": ["path", "target_project"],
+        },
     },
     {
         "name": "file_bug_report",
@@ -198,6 +272,25 @@ async def _execute_tool(name: str, tool_input: dict) -> str:
         threading.Thread(target=_restart, daemon=False).start()
         return json.dumps({"ok": True, "pull": pull_out, "restarting": True})
 
+    if name == "scan_notes_missing_fields":
+        from api.services import reprocess_service
+        field = tool_input.get("field") or "participants"
+        hits = await asyncio.to_thread(reprocess_service.scan_missing_fields, field)
+        return json.dumps({"field": field, "count": len(hits), "notes": hits}, indent=2)
+
+    if name == "reprocess_note":
+        from api.services import reprocess_service
+        path = tool_input.get("path", "")
+        result = await asyncio.to_thread(reprocess_service.reprocess_note, path)
+        return json.dumps(result)
+
+    if name == "move_note":
+        from api.services import reprocess_service
+        path = tool_input.get("path", "")
+        target = tool_input.get("target_project", "")
+        result = await asyncio.to_thread(reprocess_service.move_note, path, target)
+        return json.dumps(result)
+
     if name == "file_bug_report":
         title = tool_input.get("title", "Bug report from Glen")
         body = tool_input.get("body", "No details provided.")
@@ -281,6 +374,9 @@ async def stream_response(
                 "restart_processor": "\n\n_Restarting the processor..._\n\n",
                 "pull_otter_transcripts": "\n\n_Pulling new transcripts from Otter..._\n\n",
                 "update_server": "\n\n_Pulling latest code from GitHub..._\n\n",
+                "scan_notes_missing_fields": "\n\n_Scanning the vault..._\n\n",
+                "reprocess_note": "\n\n_Reprocessing the note..._\n\n",
+                "move_note": "\n\n_Moving the note..._\n\n",
             }
             if block.name in notices:
                 yield {"type": "token", "content": notices[block.name]}

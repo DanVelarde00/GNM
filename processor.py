@@ -19,14 +19,19 @@ import config
 
 # ── Claude processing prompt ────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """You are a note analysis assistant for Glen at Calico Infrastructure Holdings.
+SYSTEM_PROMPT = """You are a note analysis assistant for Glen, who works at Calico Infrastructure Holdings.
 You process meeting transcripts and notes into structured Obsidian-compatible markdown.
 
 Known projects: {projects}
 Project aliases (always resolve to the canonical name in your response): {aliases}
 
+IMPORTANT — "Calico Infrastructure Holdings" is the COMPANY Glen works at, NOT a project.
+"Calico" is also the name of ONE specific project. Only assign the project "Calico" when the
+note is specifically about the Calico project itself — never as a default just because Glen
+works at Calico. If the note doesn't clearly belong to a known project, use "General".
+
 Tag taxonomy:
-- Project tags (use short form): #calico, #cobia, #personal, #vistra, #zelestra, #goldstone
+- Project tags (use short form): #cobia, #personal, #vistra, #zelestra, #goldstone (and #calico ONLY for the Calico project)
 - Type tags: #meeting, #note, #call, #brainstorm
 - Topic tags: #solar-tax-equity, #sce, #due-diligence, #finance, #legal, #operations, #strategy
 - People: use #people for individual person notes — NEVER use #person
@@ -37,8 +42,10 @@ greetings, and closing courtesies (e.g. "How are you?", "Thanks for joining", "T
 
 Your job:
 1. Read the raw transcript/note.
-2. Detect which project it belongs to from context. If unclear, use "General".
-   If multiple projects are discussed, pick the primary one.
+2. Detect which project it belongs to from context AND from the source filename
+   (the filename often contains the project name, e.g. "...goldstone..." -> Goldstone).
+   If unclear, use "General". If multiple projects are discussed, pick the primary one.
+   Do NOT default to "Calico" — that is the company, not the default project.
 3. Extract the date. If not explicit in the text, use today: {today}.
 4. Identify ALL participants/people mentioned by name.
 5. Determine a short topic (2-5 words, lowercase, hyphenated) for the H1 heading.
@@ -53,7 +60,7 @@ The JSON schema:
   "source": "otter|inq|manual",
   "participants": ["Name One", "Name Two"],
   "project": "ProjectName",
-  "tags": ["#calico", "#meeting", "#solar-tax-equity"],
+  "tags": ["#<project-slug>", "#meeting", "#<topic>"],
   "topic": "short-topic-slug",
   "summary": "3-5 sentence summary of the content.",
   "key_points": ["Point one", "Point two"],
@@ -74,6 +81,31 @@ The JSON schema:
 def _project_slug(project_name: str) -> str:
     """Convert project name to a tag-safe slug: 'Data Center' → 'data-center'."""
     return re.sub(r"[^\w]+", "-", project_name.lower()).strip("-")
+
+
+def detect_project_from_filename(stem: str) -> str | None:
+    """Return a known project name if exactly one appears as a word in the stem.
+
+    Deterministic override for the misrouting bug: a file named
+    '2026-05-08-goldstone-data-center-project-kickoff' must route to Goldstone
+    regardless of how Claude classifies the content. Boundaries are any
+    non-alphanumeric run, so hyphen-, underscore-, space- and dot-separated
+    filenames all match ('2026 goldstone review' -> Goldstone). 'Calico' is
+    intentionally excluded — it's the company name and appears in too many
+    unrelated contexts to be a reliable filename signal.
+
+    Returns None when the filename names zero OR multiple projects: a name like
+    '...personal-notes-on-vistra...' is ambiguous, so we defer to Claude's
+    content classification rather than arbitrarily picking by PROJECTS order.
+    """
+    stem_lower = stem.lower()
+    matches = []
+    for project in config.PROJECTS:
+        if project.lower() == "calico":
+            continue
+        if re.search(rf"(?<![a-z0-9]){re.escape(project.lower())}(?![a-z0-9])", stem_lower):
+            matches.append(project)
+    return matches[0] if len(matches) == 1 else None
 
 
 # ── File reading helpers ────────────────────────────────────────────────────
@@ -139,6 +171,16 @@ def parse_date(date_str: str) -> datetime:
         return datetime.strptime(date_str, "%Y-%m-%d")
     except (ValueError, TypeError):
         return datetime.now()
+
+
+def parse_date_strict(date_str: str) -> datetime | None:
+    """Parse YYYY-MM-DD, returning None on failure (unlike parse_date, which
+    falls back to today). Used so a malformed filename date ('2026-13-45') can't
+    masquerade as a valid filename date and silently stamp the note with today."""
+    try:
+        return datetime.strptime(date_str, "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return None
 
 
 # ── Parse Claude's JSON response ───────────────────────────────────────────
@@ -305,19 +347,35 @@ def route_to_vault(data: dict, source_path: Path) -> dict:
     project = data.get("project", "General")
     project = config.PROJECT_ALIASES.get(project, project)
 
+    # Deterministic filename override: if the project name is in the filename,
+    # it wins over Claude's classification (fixes the Calico-misrouting bug where
+    # 'goldstone'/'zelestra' files were dumped into Calico).
+    fn_project = detect_project_from_filename(source_path.stem)
+    if fn_project and fn_project != project:
+        print(f"  Project override: filename signals '{fn_project}' (Claude said '{project}') — using '{fn_project}'")
+        project = fn_project
+        data["project"] = fn_project
+
     # Validate project — create flat structure if new
     project_dir = config.VAULT_PATH / "Projects" / project
     project_dir.mkdir(parents=True, exist_ok=True)
 
-    # Date — prefer Claude's value; fall back to filename date if Claude's is
-    # wildly wrong (>180 days from the filename's embedded date).
+    # Date — the filename's embedded date is authoritative when present (it comes
+    # from Otter's created_at or the manual namer). Claude reads the date from
+    # content and sometimes substitutes today's date; prefer the filename date.
     date = parse_date(data.get("date"))
     fn_match = re.match(r"(\d{4}-\d{2}-\d{2})", source_path.stem)
     if fn_match:
-        fn_date = parse_date(fn_match.group(1))
-        if abs((date - fn_date).days) > 180:
-            print(f"  WARNING: Claude date {date.date()} is far from filename date {fn_date.date()} — using filename date")
+        # Only trust the filename date if it's a real, parseable calendar date.
+        # A malformed shape like '2026-13-45' matches the regex but isn't a valid
+        # date; without this guard parse_date would fall back to today and the
+        # "override" would silently discard Claude's correct content date.
+        fn_date = parse_date_strict(fn_match.group(1))
+        if fn_date is not None:
+            if date.date() != fn_date.date():
+                print(f"  Date override: using filename date {fn_date.date()} (Claude said {date.date()})")
             date = fn_date
+            data["date"] = fn_date.strftime("%Y-%m-%d")
     date_str = date.strftime("%Y-%m-%d")
 
     # ── Deterministic filename from source identity (Fix 5) ──
@@ -411,7 +469,7 @@ def mark_processed(source_path: Path):
 
 # ── Main processing function ───────────────────────────────────────────────
 
-def process_file(file_path: Path, source_type: str = "otter") -> Optional[dict]:
+def process_file(file_path: Path, source_type: str = "otter", move_when_done: bool = True) -> Optional[dict]:
     print(f"\n{'='*60}")
     print(f"  Processing: {file_path.name}")
     print(f"  Source: {source_type}")
@@ -475,8 +533,9 @@ def process_file(file_path: Path, source_type: str = "otter") -> Optional[dict]:
     # Route to vault (before mark_processed so a crash doesn't lose the source)
     result = route_to_vault(data, file_path)
 
-    # Move source to Processed
-    mark_processed(file_path)
+    # Move source to Processed (skipped on reprocess — source already in Processed)
+    if move_when_done:
+        mark_processed(file_path)
 
     print(f"\n  Done -> {result['project']}/{file_path.name}")
     return result

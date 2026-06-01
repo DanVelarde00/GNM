@@ -50,6 +50,8 @@ INBOX_INQ = INBOX_PATH / "Inq"
 INBOX_OTTER = INBOX_PATH / "Otter"
 INBOX_MANUAL = INBOX_PATH / "Manual"
 INBOX_PROCESSED = INBOX_PATH / "Processed"
+# Drop a file here and the processor auto-opens a GitHub issue for Dan to action.
+INBOX_FORDAN = INBOX_PATH / "ForDan"
 
 # ── Known projects ──────────────────────────────────────────────────────────
 PROJECTS = ["Calico", "Cobia", "Goldstone", "Personal", "Vistra", "Zelestra"]
